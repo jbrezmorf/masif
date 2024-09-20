@@ -11,6 +11,10 @@ FreeCAD notes:
 """
 
 import sys
+from typing import *
+from pathlib import Path
+# Get the directory of the current script
+script_dir = Path(__file__).parent
 import os
 
 # Adjust the path according to where FreeCAD is installed
@@ -18,32 +22,60 @@ freecad_path = '/usr/lib/freecad-python3/lib'  # Set your FreeCAD installation p
 
 if freecad_path not in sys.path:
     sys.path.append(freecad_path)
+    sys.path.append(script_dir)
 
+print(sys.path)
 # Import FreeCAD modules
+import tool_shapes as ts
 import FreeCAD
 import Part
 #import FreeCADGui
 
-from typing import *
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import attrs
 
 
-# Get the directory of the current script
-script_dir = Path(__file__).parent
+
+
+def vec_to_list(vec:FreeCAD.Vector):
+    return (vec.x, vec.y, vec.z)
+
+def merge_shelves(list1, list2):
+    # Create dictionaries mapping height to objects
+    dict1 = {obj.height: obj for obj in list1}
+    dict2 = {obj.height: obj for obj in list2}
+
+    # Get all unique heights from both lists
+    all_heights = sorted(set(dict1.keys()).union(dict2.keys()))
+
+    # Create tuples by pairing objects from dict1 and dict2 based on height
+    result = [(h, dict1.get(h), dict2.get(h)) for h in all_heights]
+    return result
+
+@attrs.define
+class PlankPart:
+    length : float
+    width : float
+    rot : FreeCAD.Rotation   # rotation object
+    thick : float
+
+    def shape(self):
+        shape = Part.makeBox(self.length, self.width, self.thick)
+        rot_mat = FreeCAD.Placement(FreeCAD.Vector(0,0,0), self.rot).toMatrix()
+        shape = shape.transformGeometry(rot_mat)
+        bb = shape.BoundBox
+        return shape @ ts.translate([-bb.XMin, -bb.YMin, -bb.ZMin])
+
 
 
 @attrs.define
 class WPart:
-    length : float
-    width : float
-    rot : FreeCAD.Rotation   # rotation object
+    shape: Part.Shape
     n_parts: int
-    thick : float
     name: str
+    dimensions: PlankPart = None
     _i_part: int = 0
 
     @classmethod
@@ -66,19 +98,10 @@ class WPart:
                 rot = FreeCAD.Rotation(axes[r_ax], 90)
                 rot_total = rot.multiply(rot_total)
                # print(rot_ax, rot, rot_total)
-        return cls(length, width, rot_total, n_parts, thick, name)
+        plank = PlankPart(length, width, rot_total, thick)
+        part_shape = plank.shape()
+        return cls(part_shape, n_parts, name, dimensions=plank)
 
-    @property
-    def shape(self):
-        shape = Part.makeBox(self.length, self.width, self.thick)
-        pos = FreeCAD.Vector(0,0,0)
-        #print("1",pos, self.rot)
-        shape.Placement = FreeCAD.Placement(pos, self.rot)
-        bb = shape.BoundBox
-        pos = FreeCAD.Vector(-bb.XMin, -bb.YMin, -bb.ZMin)
-        #print("2",pos, self.rot)
-        shape.Placement = FreeCAD.Placement(pos, self.rot)
-        return shape
 
     def allocate(self):
         """
@@ -118,6 +141,7 @@ class Shelf:
     part = attrs.field(type=WPart)
     drills = attrs.field(type=Tuple[DrillFn, DrillFn],
                          converter=lambda x: x if isinstance(x, tuple) else (x, x))
+    placed = attrs.field(type=PlacedPart, default = None)
 
 @attrs.define
 class Col:
@@ -125,9 +149,15 @@ class Col:
     width: int
     shelves: List[Shelf]
 
+    @classmethod
+    def empty(cls):
+        return cls(VPannel(None, 0, None), 0, [])
+
+
 class Wardrobe:
     def __init__(self, workdir, doc):
         self.thickness = 18
+        self.shelf_width = 600
 
         # Load the ODS file
         # Replace 'your_file.ods' with the path to your ODS file
@@ -147,46 +177,72 @@ class Wardrobe:
             part = WPart.construct(i, s, l, w, r, n, thick=self.thickness)
             setattr(self, part.name, part)
 
+        # drawers
+        self.drawer_40_24 = WPart(ts.drawer(390, 240, self.shelf_width), 2, 'drawer_40_24')
+        self.drawer_40_30 = WPart(ts.drawer(390, 300, self.shelf_width), 2, 'drawer_40_30')
+        self.drawer_40_20 = WPart(ts.drawer(390, 200, self.shelf_width), 6, 'drawer_40_20')
+        self.drawer_30_24 = WPart(ts.drawer(300, 240, self.shelf_width), 1, 'drawer_30_24')
+        self.drawer_30_30 = WPart(ts.drawer(300, 300, self.shelf_width), 2, 'drawer_30_30')
+
         # Create a new document
 
         self.doc = doc
         self.parts = [] # List of parts
+        self._pin_edge = ts.side_symmetric(ts.pin_edge(self.shelf_width))
+        self._rastex = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=False)
+        self._rastex_through = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=True)
+        self._vb_strip = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=False)
+        self._vb_strip_through = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=True)
+        self._rail = ts.rail()
         self.make_parts()
         #dirll()
         #separate()
 
 
-    def drill(self, part, tool, position, rotation=None):
-        # Create a copy of the tool for operation
-        tool_copy = tool.copy()
 
-        # Set the position and rotation of the tool
-        if rotation is None:
-            rotation = FreeCAD.Rotation()  # No rotation by default
 
-        tool_copy.Placement = FreeCAD.Placement(position, rotation)
-
-        # Perform the cut operation
-        result = part.cut(tool_copy)
-        return result
-
-    def drill_pins(self, panel, shelf):
+    def drill_edge(self, pannel:PlacedPart, shelf:PlacedPart, tool):
         # Assume panel and shelf are objects with Placement
-        pos = FreeCAD.Vector(*vec)
-        z_move = FreeCAD.Vector(0, 0, 30)
-        tool = Part.makeCylinder(5, 10)
-        for p in [pos - z_move, pos, pos + z_move]:
-            part = self.drill(part, tool, p)
-        return part
+        tool_l, tool_r = tool
 
-    def drill_hetix(self, panel, shelf):
-        pos = FreeCAD.Vector(*vec)
-        z_move = FreeCAD.Vector(0, 0, 30)
-        tool = Part.makeCylinder(5, 10)
-        for p in [pos - z_move, pos, pos + z_move]:
-            part = self.drill(part, tool, p)
-        return part
+        if pannel.position[0] < shelf.position[0]:
+            #drill_rot = FreeCAD.Rotation()
+            x_shift = shelf.position[0]
+            tool_side = tool_r
+        else:
+            #drill_rot = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), 180)
+            x_shift = pannel.position[0]
+            tool_side = tool_l
+        common_width = pannel.part.dimensions.width
+        tool_placement =  FreeCAD.Placement(FreeCAD.Vector(x_shift, common_width / 2, shelf.position[2]), FreeCAD.Rotation())
+        pannel.obj = ts.drill(pannel.obj, tool_side, tool_placement)
+        shelf.obj = ts.drill(shelf.obj, tool_side, tool_placement)
+        #
+        # for z_add in [-z_dist, 0, z_dist]:
+        #     for y_shift in [shelf.part.width * 0.1, shelf.part.width * 0.9]:
+        #         position = FreeCAD.Vector(x_shift, y_shift, shelf.position[2] + z_add)
+        #         pannel = self.drill(pannel, tool, position, rotation=drill_rot)
+        #         shelf = self.drill(shelf, tool, position, rotation=drill_rot)
+        # return pannel, shelf
 
+    def drill_pins(self, pannel:PlacedPart, shelf:PlacedPart, through:bool = False):
+        self.drill_edge(pannel, shelf, self._pin_edge)
+
+    def drill_rastex(self, pannel:PlacedPart, shelf:PlacedPart, through:bool = False):
+        if through:
+            self.drill_edge(pannel, shelf, self._rastex_through)
+        else:
+            self.drill_edge(pannel, shelf, self._rastex)
+
+
+    def drill_vb_strip(self, pannel:PlacedPart, shelf:PlacedPart, through:bool = False):
+        if through:
+            self.drill_edge(pannel, shelf, self._vb_strip_through)
+        else:
+            self.drill_edge(pannel, shelf, self._vb_strip)
+
+    def drill_rail(self, pannel:PlacedPart, shelf:PlacedPart, through:bool = False):
+        self. drill_edge(pannel, shelf, self._rail)
 
     def add_object(self, part:WPart, placement):
         if not isinstance(placement, FreeCAD.Vector):
@@ -216,43 +272,50 @@ class Wardrobe:
         """
         # construct cols
         x_shift = 0
-        for last, col in zip([None, *cols], cols):
+        for last, col in zip([Col.empty(), *cols], cols):
             print(col)
             # left vertical pannel
-            pannel: PlacedPart = self.add_object(col.pannel.part, [x_shift, 0, self.thickness])
+            pannel_plank = col.pannel.part.dimensions
+            pannel_placed: PlacedPart = self.add_object(col.pannel.part, [x_shift, 0, self.thickness])
             # bottom
+            bot_plank = col.pannel.bot_part.dimensions
             bot_part = col.pannel.bot_part
             if col.pannel.bot_align == -1:
                 align_shift = 0
             elif col.pannel.bot_align == 0:
-                align_shift = (-bot_part.width + self.thickness) / 2
+                align_shift = (-bot_plank.width + self.thickness) / 2
             else:
-                align_shift = -bot_part.width + self.thickness
-            bottom: PlacedPart =  self.add_object(bot_part, [x_shift + align_shift, pannel.part.width - bot_part.length, 0])
+                align_shift = -bot_plank.width + self.thickness
+            bottom: PlacedPart =  self.add_object(bot_part, [x_shift + align_shift, pannel_plank.width - bot_plank.length, 0])
 
 
-            # shelfs
+            # shelf pairs
             x_shift+= self.thickness
-            if last is not None:
-                last_dict = {s.height: s for s in last.shelves}
-            else:
-                last_dict = {}
-
-            for shelf in col.shelves:
-                if col.pannel.part.length < shelf.height:
-                    print(f"    ...{shelf}")
+            shelf_pairs = merge_shelves(last.shelves, col.shelves)
+            for height, last_shelf, shelf in shelf_pairs:
+                print(f"    shelf_h: {height}")
+                shelf_flag = (last_shelf is not None, shelf is not None)
+                shelf_fn = lambda s, i : None if s is None else s.drills[i]
+                if pannel_plank.length < height:
                     # continuing shelf
-                    #assert , f"Pannel (l={col.pannel.part.length}) block continuing shelf (h={shelf.height})"
+                    #print(f"    ...{shelf}")
                     # check matching shelf in last
-                    try:
-                        continuing = last_dict[shelf.height]
-                    except KeyError as e:
-                        print(last_dict)
-                        raise e
+                    if not shelf_flag[0] or not shelf_flag[1]:
+                        raise Exception(f"Missing continuing shelf, flag: {shelf_flag}.")
                 else:
-                    print(f"    {shelf}")
                     # new shelf
-                    shlef_placed = self.add_object(shelf.part, [x_shift, 0, shelf.height])
+                    if shelf_flag[1] and shelf.part is not None:
+                        shelf_placed = self.add_object(shelf.part, [x_shift, 0, shelf.height])
+                        shelf.placed = shelf_placed
+
+                    # drilling
+                    last_drill = shelf_fn(last_shelf, 1)
+                    act_drill = shelf_fn(shelf, 0)
+                    drill_through = last_drill is act_drill
+                    if last_drill is not None:
+                        shelf_fn(last_shelf, 1)(pannel_placed, last_shelf.placed, through=drill_through)
+                    if act_drill is not None:
+                        shelf_fn(shelf, 0)(pannel_placed, shelf.placed, through=drill_through)
 
             x_shift+= col.width
 
@@ -278,36 +341,47 @@ class Wardrobe:
             structural shells
         :return:
         """
-        drill_strip = None
-        drill_hetix = None
-        drill_pins = self.drill_pins
+        drill_vb_strip = None #self.drill_vb_strip
+        drill_rastex = None #self.drill_rastex
+        drill_pins = None #self.drill_pins
+        drill_rail = self.drill_rail
 
         col_0_shelves = [
-            Shelf(1500, self.shelf_top_long, (drill_strip, drill_hetix)),
+            Shelf(1250, self.drawer_30_24, drill_rail),
+            Shelf(1500, self.shelf_top_long, (drill_vb_strip, drill_rastex)),
             Shelf(1770, self.shelf_top_long, drill_pins),
             Shelf(2040, self.shelf_top_long, drill_pins)]
         col_1_shelves = [
+            Shelf(330, self.drawer_40_30, drill_rail),
+            Shelf(650, self.drawer_40_30, drill_rail),
+            Shelf(970, self.drawer_40_24, drill_rail),
             Shelf(1230, self.shelf_40, drill_pins),
-            *col_0_shelves]
+            *col_0_shelves[1:]]
         col_2_shelves = [
-            Shelf(982, self.shelf_40, drill_hetix),
+            Shelf(330, self.drawer_40_20, drill_rail),
+            Shelf(540, self.drawer_40_20, drill_rail),
+            Shelf(750, self.drawer_40_20, drill_rail),
+            Shelf(960, self.shelf_40, drill_rastex),
             Shelf(1230, self.shelf_40, drill_pins),
-            Shelf(1500, self.shelf_40, drill_hetix),
+            Shelf(1500, self.shelf_40, drill_rastex),
             Shelf(1770, self.shelf_40, drill_pins),
             Shelf(2040, self.shelf_40, drill_pins)]
         col_3_shelves = [
-            Shelf(1500, self.shelf_middle, drill_hetix),
+            Shelf(1500, self.shelf_middle, drill_rastex),
             Shelf(1770, self.shelf_middle, drill_pins),
             Shelf(2040, self.shelf_middle, drill_pins)]
         col_5_shelves = [
-            Shelf(950, self.shelf_30, drill_pins),
+            Shelf(330, self.drawer_30_30, drill_rail),
+            Shelf(645, self.drawer_30_30, drill_rail),
+            Shelf(960, self.shelf_30, drill_pins),
             Shelf(1230, self.shelf_30, drill_pins),
-            *col_0_shelves]
+            *col_0_shelves[1:]]
         col_6_shelves = [
-            Shelf(350, self.shelf_40, drill_pins),
-            Shelf(950, self.shelf_40, drill_pins),
+            Shelf(330, self.shelf_40, drill_pins),
+            Shelf(705, self.drawer_40_24, drill_rail),
+            Shelf(960, self.shelf_40, drill_pins),
             Shelf(1230, self.shelf_40, drill_pins),
-            *col_0_shelves]
+            *col_0_shelves[1:]]
 
         left_pannel = VPannel(self.bottom_side, -1, self.vertical_panel)
         mid_long = VPannel(self.bottom, 0, self.vertical_panel)
@@ -327,21 +401,22 @@ class Wardrobe:
         body = self.construct_columns(columns)
 
         # bottom front
-        y_shift = self.vertical_panel.width - self.bottom.length - self.bottom_front_L.width
+
+        y_shift = self.vertical_panel.dimensions.width - self.bottom.dimensions.length - self.bottom_front_L.dimensions.width
         bot_front_l = self.add_object(self.bottom_front_L, [0, y_shift, 0])
-        self.add_object(self.bottom_front_R, [bot_front_l.part.length, y_shift, 0] )
+        self.add_object(self.bottom_front_R, [bot_front_l.part.dimensions.length, y_shift, 0] )
 
         # ceiling
         y_shift = -100
-        z_shift = self.vertical_panel.length + self.thickness
+        z_shift = self.vertical_panel.dimensions.length + self.thickness
         ceil_a = self.add_object(self.ceil_A, [0, y_shift, z_shift])
-        ceil_b = self.add_object(self.ceil_B, [ceil_a.part.length, y_shift, z_shift])
-        ceil_c = self.add_object(self.ceil_C, [ceil_a.part.length, y_shift + 600, z_shift])
+        ceil_b = self.add_object(self.ceil_B, [ceil_a.part.dimensions.length, y_shift, z_shift])
+        ceil_c = self.add_object(self.ceil_C, [ceil_a.part.dimensions.length, y_shift + 600, z_shift])
 
         # front cover
-        z_shift = z_shift - self.middle_front_A.width
+        z_shift = z_shift - self.middle_front_A.dimensions.width
         cover_a = self.add_object(self.middle_front_A, [0, y_shift, z_shift])
-        cover_b = self.add_object(self.middle_front_B, [cover_a.part.length, y_shift, z_shift])
+        cover_b = self.add_object(self.middle_front_B, [cover_a.part.dimensions.length, y_shift, z_shift])
 
 
 
@@ -446,6 +521,11 @@ else:
 doc = FreeCAD.ActiveDocument  # Get the cleared (or new) document
 
 w = Wardrobe(script_dir, doc)
+
 w.doc.recompute()
+# Ensure all objects in the document are visible
+for obj in w.doc.Objects:
+    obj.Visibility = True  # Make the object visible
+
 path = script_dir / "Warderobe.FCStd"
 w.doc.saveAs(str(path))

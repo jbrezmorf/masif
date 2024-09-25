@@ -153,6 +153,40 @@ class Col:
     def empty(cls):
         return cls(VPannel(None, 0, None), 0, [])
 
+def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir):
+    i_min, i_max = 0, 1
+    bb_a = ts.aabb(part_a.obj.Shape.BoundBox)
+    bb_b = ts.aabb(part_b.obj.Shape.BoundBox)
+    connect_plane_a = bb_a[i_max][dowel_dir]
+    connect_plane_b = bb_b[i_min][dowel_dir]
+    assert connect_plane_a == connect_plane_b, f"{connect_plane_a} != {connect_plane_b}"
+    edge_min = max(bb_a[i_min][edge_dir], bb_b[i_min][edge_dir]) + 20
+    edge_max = min(bb_a[i_max][edge_dir], bb_b[i_max][edge_dir]) - 20
+    if edge_max < edge_min:
+        return part_a, part_b, None
+    dowel_dist = 80
+    n_dowels = int((edge_max - edge_min) / dowel_dist)
+    n_dowels = max(2, n_dowels)
+
+    dowel_vec = [0, 0, 0]
+    dowel_vec[dowel_dir] = 1
+    edge_vec = [0, 0, 0]
+    edge_vec[edge_dir] = 1
+    d_row = ts.dowel_row(edge_min, edge_max, n_dowels, dowel_vec, edge_vec)
+
+    position = [0, 0, 0]
+    position[dowel_dir] = connect_plane_a
+    position[dowel_dir] = connect_plane_a
+    remain_dir = 3 - dowel_dir - edge_dir
+    assert bb_a[i_min][remain_dir] == bb_b[i_min][remain_dir]
+    assert bb_a[i_max][remain_dir] == bb_b[i_max][remain_dir]
+    remain_pos = (bb_a[i_min][remain_dir] + bb_a[i_max][remain_dir]) / 2
+    position[remain_dir] = remain_pos
+    d_row = d_row @ ts.translate(position)
+    part_a.obj = ts.drill(part_a.obj, d_row)
+    part_b.obj = ts.drill(part_b.obj, d_row)
+    return part_a, part_b, d_row
+
 
 class Wardrobe:
     def __init__(self, workdir, doc):
@@ -244,7 +278,7 @@ class Wardrobe:
     def drill_rail(self, pannel:PlacedPart, shelf:PlacedPart, through:bool = False):
         self. drill_edge(pannel, shelf, self._rail)
 
-    def add_object(self, part:WPart, placement):
+    def add_object(self, part:WPart, placement) -> PlacedPart:
         if not isinstance(placement, FreeCAD.Vector):
             placement = FreeCAD.Vector(*placement)
         placed = PlacedPart(part, placement, name=f"{part.name}_{part.allocate()}")
@@ -270,6 +304,32 @@ class Wardrobe:
 
         :return: composed wardrobe body object of the parst
         """
+
+
+        # bottom front
+        y_shift = self.vertical_panel.dimensions.width - self.bottom.dimensions.length - self.bottom_front_L.dimensions.width
+        bot_front_l = self.add_object(self.bottom_front_L, [0, y_shift, 0])
+        bot_front_r = self.add_object(self.bottom_front_R, [bot_front_l.part.dimensions.length, y_shift, 0] )
+        bot_front_l, bot_front_r, tool = dowel_connect(bot_front_l, bot_front_r, dowel_dir=0, edge_dir=1)
+
+        # ceiling
+        y_shift = -100
+        z_shift = self.vertical_panel.dimensions.length + self.thickness
+        ceil_a = self.add_object(self.ceil_A, [0, y_shift, z_shift])
+        ceil_b = self.add_object(self.ceil_B, [ceil_a.part.dimensions.length, y_shift, z_shift])
+        ceil_c = self.add_object(self.ceil_C, [ceil_a.part.dimensions.length, y_shift + 600, z_shift])
+        ceil_a, ceil_b, tool = dowel_connect(ceil_a, ceil_b, dowel_dir=0, edge_dir=1)
+        ceil_b, ceil_c, tool = dowel_connect(ceil_b, ceil_c, dowel_dir=1, edge_dir=0)
+        self.add_object(WPart(tool, 1, 'ceil_dowel_cut'), [0, 0, 0])
+
+        # front cover
+        z_shift = z_shift - self.middle_front_A.dimensions.width
+        cover_a = self.add_object(self.middle_front_A, [0, y_shift, z_shift])
+        cover_b = self.add_object(self.middle_front_B, [cover_a.part.dimensions.length, y_shift, z_shift])
+        cover_a, cover_b, tool = dowel_connect(cover_a, cover_b, dowel_dir=0, edge_dir=2)
+        self.add_object(WPart(tool, 1, 'front_dowel_cut'), [0, 0, 0])
+
+
         # construct cols
         x_shift = 0
         for last, col in zip([Col.empty(), *cols], cols):
@@ -287,7 +347,16 @@ class Wardrobe:
             else:
                 align_shift = -bot_plank.width + self.thickness
             bottom: PlacedPart =  self.add_object(bot_part, [x_shift + align_shift, pannel_plank.width - bot_plank.length, 0])
-
+            bot_front_l, bottom, tool_l = dowel_connect(bot_front_l, bottom, dowel_dir=1, edge_dir=0)
+            #bot_front_r, bottom, tool_r = dowel_connect(bot_front_r, bottom, dowel_dir=1, edge_dir=0)
+            if tool_l is None:
+                pass
+                #assert tool_r is not None
+                #self.add_object(WPart(tool_r, 1, f'{bottom.name}_dowel_cut_r'), [0, 0, 0])
+            else:
+                #if tool_r is not None:
+                #    self.add_object(WPart(tool_r, 1, f'{bottom.name}_dowel_cut_r'), [0, 0, 0])
+                self.add_object(WPart(tool_l, 1, f'{bottom.name}_dowel_cut_l'), [0, 0, 0])
 
             # shelf pairs
             x_shift+= self.thickness
@@ -399,25 +468,6 @@ class Wardrobe:
         ]
 
         body = self.construct_columns(columns)
-
-        # bottom front
-
-        y_shift = self.vertical_panel.dimensions.width - self.bottom.dimensions.length - self.bottom_front_L.dimensions.width
-        bot_front_l = self.add_object(self.bottom_front_L, [0, y_shift, 0])
-        self.add_object(self.bottom_front_R, [bot_front_l.part.dimensions.length, y_shift, 0] )
-
-        # ceiling
-        y_shift = -100
-        z_shift = self.vertical_panel.dimensions.length + self.thickness
-        ceil_a = self.add_object(self.ceil_A, [0, y_shift, z_shift])
-        ceil_b = self.add_object(self.ceil_B, [ceil_a.part.dimensions.length, y_shift, z_shift])
-        ceil_c = self.add_object(self.ceil_C, [ceil_a.part.dimensions.length, y_shift + 600, z_shift])
-
-        # front cover
-        z_shift = z_shift - self.middle_front_A.dimensions.width
-        cover_a = self.add_object(self.middle_front_A, [0, y_shift, z_shift])
-        cover_b = self.add_object(self.middle_front_B, [cover_a.part.dimensions.length, y_shift, z_shift])
-
 
 
 

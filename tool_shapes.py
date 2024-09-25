@@ -1,5 +1,6 @@
 from typing import *
 import sys
+import numpy as np
 
 # Adjust the path according to where FreeCAD is installed
 freecad_path = '/usr/lib/freecad-python3/lib'  # Set your FreeCAD installation path
@@ -21,6 +22,8 @@ def add_object(doc, name, shape, translate, rotate = None):
     obj.Placement = placement
     return obj
 
+def aabb(bb:FreeCAD.BoundBox):
+    return ((bb.XMin, bb.YMin, bb.ZMin), (bb.XMax, bb.YMax, bb.ZMax))
 
 def fuse(shapes):
     assert len(shapes) > 0
@@ -29,8 +32,12 @@ def fuse(shapes):
         result = result.fuse(s)
     return result
 
-def rotate(axis, angle):
-    return Transform(rotation=FreeCAD.Rotation(FreeCAD.Vector(*axis), angle))
+def rotate(axis:List[float], angle:Union[float, List[float]]):
+    if isinstance(angle, (float, int)):
+        rot = FreeCAD.Rotation(FreeCAD.Vector(*axis), angle)
+    else:
+        rot = FreeCAD.Rotation(FreeCAD.Vector(*axis), FreeCAD.Vector(*angle))
+    return Transform(rotation=rot)
 
 def translate(pos):
     return Transform(position=FreeCAD.Vector(*pos))
@@ -55,11 +62,13 @@ class Transform:
         transformed_shape = shape.transformGeometry(mat)
         return transformed_shape
 
-def drill(feature: Part.Feature, tool:'Shape', position:Union[FreeCAD.Placement, List[float]], rotation=None):
+def drill(feature: Part.Feature, tool:'Shape', position:Union[FreeCAD.Placement, List[float]] = None, rotation=None):
     # Create a copy of the tool and apply possition then cut it from part in actual placement.
     #
     # Set the position and rotation of the tool
     print("    drill(...", end=None)
+    if position is None:
+        position = [0, 0, 0]
     if isinstance(position, FreeCAD.Placement):
         tool_placement = position
     else:
@@ -140,8 +149,18 @@ def dowel(thickness):
     :return:
     """
     diam = 6
-    l = 35.5
-    return Part.makeCylinder(diam / 2, l) @ rotate([0, 1, 0], 90) @ translate([-14.25, 0, thickness/2])
+    l = 35
+    left_extent = -14
+    return Part.makeCylinder(diam / 2, l + 1) @ rotate([0, 1, 0], 90) @ translate([left_extent - 0.5, 0, thickness/2])
+
+def dowel_row(a, b, n, dowel_vec, edge_vec, left_extent=0):
+    diam = 6
+    l = 35
+    if left_extent == 0:
+        left_extent = l / 2
+    single = Part.makeCylinder(diam / 2, l + 1) @ rotate([0, 0, 1], dowel_vec) @ translate(-np.array(dowel_vec) * (left_extent + 0.5))
+    y_pos_vec = [y * np.array(edge_vec) for y in np.linspace(a, b, n)]
+    return fuse([single.copy() @ translate(yy) for yy in y_pos_vec])
 
 
 def rastex(shelf_thickness, through:bool=False):

@@ -20,8 +20,9 @@ Principles
 
 
 TODO:
-- library of drill parts with tests (single pannel, single shelf)
-- fix orientation of shelf pins, they are currently with axis Z.
-- buy shelf pins, missing ! => adapt the script
+- add top and bottom dowels - pannels
+- 1mm cut for rails
+- connection dowels
+- front pannels
 - How display internall walls? 
 - save to STEP file

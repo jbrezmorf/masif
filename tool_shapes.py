@@ -1,7 +1,9 @@
 from typing import *
 import sys
-import numpy as np
 
+import attrs
+import numpy as np
+from functools import cached_property
 # Adjust the path according to where FreeCAD is installed
 freecad_path = '/usr/lib/freecad-python3/lib'  # Set your FreeCAD installation path
 
@@ -10,6 +12,9 @@ if freecad_path not in sys.path:
 
 import FreeCAD
 import Part
+from machine import DrillOp, OperationList, rotate, translate, Transform
+
+#Vector = np.ndarray
 
 def add_object(doc, name, shape, translate, rotate = None):
     obj = doc.addObject("Part::Feature", name)
@@ -22,6 +27,7 @@ def add_object(doc, name, shape, translate, rotate = None):
     obj.Placement = placement
     return obj
 
+
 def aabb(bb:FreeCAD.BoundBox):
     return ((bb.XMin, bb.YMin, bb.ZMin), (bb.XMax, bb.YMax, bb.ZMax))
 
@@ -32,35 +38,8 @@ def fuse(shapes):
         result = result.fuse(s)
     return result
 
-def rotate(axis:List[float], angle:Union[float, List[float]]):
-    if isinstance(angle, (float, int)):
-        rot = FreeCAD.Rotation(FreeCAD.Vector(*axis), angle)
-    else:
-        rot = FreeCAD.Rotation(FreeCAD.Vector(*axis), FreeCAD.Vector(*angle))
-    return Transform(rotation=rot)
-
-def translate(pos):
-    return Transform(position=FreeCAD.Vector(*pos))
 
 
-class Transform:
-    def __init__(self, position=None, rotation=None):
-        if position is None:
-            position = FreeCAD.Vector(0, 0, 0)
-        if rotation is None:
-            rotation=FreeCAD.Rotation()
-        # Store the placement (translation + rotation)
-        self.placement = FreeCAD.Placement(position, rotation)
-
-    def __rmatmul__(self, shape):
-        """Apply the stored transform to the right-hand operand (shape)."""
-        if not isinstance(shape, Part.Shape):
-            raise TypeError(f"The right operand must be of type `Part.Shape` not {type(shape)}.")
-
-        # Apply the placement transform to the shape
-        mat = self.placement.toMatrix()
-        transformed_shape = shape.transformGeometry(mat)
-        return transformed_shape
 
 def drill(feature: Part.Feature, tool:'Shape', position:Union[FreeCAD.Placement, List[float]] = None, rotation=None):
     # Create a copy of the tool and apply possition then cut it from part in actual placement.
@@ -154,13 +133,28 @@ def dowel(thickness):
     return Part.makeCylinder(diam / 2, l + 1) @ rotate([0, 1, 0], 90) @ translate([left_extent - 0.5, 0, thickness/2])
 
 def dowel_row(a, b, n, dowel_vec, edge_vec, left_extent=0):
+    """
+    Produce two drill operations one to the X<0 half space,
+    one for the X>0 half space.
+    :param a:
+    :param b:
+    :param n:
+    :param dowel_vec:
+    :param edge_vec:
+    :param left_extent:
+    :return:
+    """
     diam = 6
     l = 35
     if left_extent == 0:
         left_extent = l / 2
-    single = Part.makeCylinder(diam / 2, l + 1) @ rotate([0, 0, 1], dowel_vec) @ translate(-np.array(dowel_vec) * (left_extent + 0.5))
+
     y_pos_vec = [y * np.array(edge_vec) for y in np.linspace(a, b, n)]
-    return fuse([single.copy() @ translate(yy) for yy in y_pos_vec])
+    drill_left = DrillOp(diam / 2, left_extent + 0.5, direction=-np.array(dowel_vec))
+    drill_right = DrillOp(diam / 2, (l -left_extent) + 0.5, direction=dowel_vec)
+    dowel_pair = OperationList(drill_left, drill_right)
+    row = OperationList(*[dowel_pair.apply(translate(yy)) for yy in y_pos_vec])
+    return row
 
 
 def rastex(shelf_thickness, through:bool=False):
@@ -200,15 +194,14 @@ def rastex(shelf_thickness, through:bool=False):
     z_shift = shelf_thickness / 2
 
     # Create the hetix cylinder (vertical along Z-axis)
-    rastex_part = Part.makeCylinder(hetix_diam / 2, hetix_l) @ translate([hetix_x, 0, 0])
     # Create the pin_in cylinder (to the left of hetix, along X-axis with Y shift)
-    pin_in = Part.makeCylinder(pin_in_diam / 2, pin_in_l) @ rotate([0, 1, 0], -90) @ translate([0, 0, z_shift])
+    shelf_drill = OperationList(
+   DrillOp(hetix_diam / 2, hetix_l, start=[hetix_x, 0, 0]),
+        DrillOp(pin_in_diam / 2, pin_in_l, start = [0, 0, z_shift], direction=[1, 0, 0])
+    )
     # Create the pin_out cylinder (to the right of hetix, along X-axis with Y shift)
-    pin_out = Part.makeCylinder(pin_out_diam / 2, pin_out_l) @ rotate([0, 1, 0], 90) @ translate([0, 0, z_shift])
-
-    # Combine all parts into a single shape
-    combined = fuse([pin_in, pin_out, rastex_part])
-    return combined
+    pannel_dril = DrillOp(pin_out_diam / 2, pin_out_l, start=[0, 0, z_shift], direction=[-1, 0, 0])
+    return OperationList(pannel_dril, shelf_drill)
 
 
 
@@ -323,3 +316,162 @@ def drawer(width, height, depth):
         Part.makeBox(rail_thickness, depth, rail_height) @ translate([rail_thickness + width, 0, z_shift])
         ]
     return fuse(components)
+
+
+@attrs.define
+class PlankPart:
+    length : float
+    width : float
+    rot : FreeCAD.Rotation   # rotation object
+    thick : float
+
+    def shape(self):
+        shape = Part.makeBox(self.length, self.width, self.thick)
+        rot_mat = FreeCAD.Placement(FreeCAD.Vector(0,0,0), self.rot).toMatrix()
+        shape = shape.transformGeometry(rot_mat)
+        bb = shape.BoundBox
+        return shape @ translate([-bb.XMin, -bb.YMin, -bb.ZMin])
+
+
+
+
+@attrs.define
+class WPart:
+    shape: Part.Shape
+    n_parts: int
+    name: str
+    dimensions: PlankPart = None
+    _i_part: int = 0
+
+    @classmethod
+    def construct(cls,
+            identifier, suffix,
+            length, width,
+            rot_ax, n_parts, thick):
+        if isinstance(suffix, str) :
+            name = (f"{identifier}_{suffix}")
+        else:
+            name = identifier
+
+        rot_total = FreeCAD.Rotation()
+        axes = dict(X=FreeCAD.Vector(1, 0, 0),
+                    Y=FreeCAD.Vector(0, 1, 0),
+                    Z=FreeCAD.Vector(0, 0, 1))
+        #print(rot_ax, type(rot_ax))
+        if isinstance(rot_ax, (str, )):
+            for r_ax in rot_ax:
+                rot = FreeCAD.Rotation(axes[r_ax], 90)
+                rot_total = rot.multiply(rot_total)
+               # print(rot_ax, rot, rot_total)
+        plank = PlankPart(length, width, rot_total, thick)
+        part_shape = plank.shape()
+        return cls(part_shape, n_parts, name, dimensions=plank)
+
+
+    def allocate(self):
+        """
+        Allocate new part instance, numbered from 1 in order
+        :return:
+        """
+        self._i_part += 1
+        assert self._i_part <= self.n_parts, f"Out of part: {self.name}, #{self._i_part} > {self.n_parts}"
+        return self._i_part
+
+
+
+
+
+@attrs.define
+class PlacedPart:
+    """
+    TODO:
+    - part as a shape in a reference position
+    - store complete placement
+    - store list of cuts
+    """
+    part : WPart
+    #position: FreeCAD.Vector       # Full placement object
+    placement: Transform
+    obj: 'Part.Feature' = None     # set after init
+    name : str = ""
+    machine_ops: List[Any] = attrs.Factory(list)
+
+    @property
+    def placement(self):
+        new_placement = FreeCAD.Placement(self.position, FreeCAD.Rotation())
+        return new_placement.multiply(self.part.shape.Placement)
+    @cached_property
+    def aabb(self):
+        final_shape = self.part.shape @ self.placement
+        return aabb(final_shape.BoundBox)
+
+    def max(self, ax):
+        return self.aabb[1][ax]
+
+    def apply_op(self, drill_op):
+        inv_placement = self.placement.inverse()
+        drill_op = drill_op.apply(inv_placement)
+        self.machine_ops.append(drill_op)
+
+    def apply_machine_ops(self):
+        shape = self.part.shape
+        for op in self.machine_ops:
+            # Create a cylinder for the hole (drill) with the given radius and length
+            cylinder = Part.makeCylinder(op.radius, op.length)
+
+            # Create a placement for the cylinder based on the DrillOp start and direction
+            direction_normalized = op.direction.normalize()
+
+            # Define the rotation to align the cylinder along the direction vector
+            rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), direction_normalized)
+
+            # Apply the placement (translation + rotation) to the cylinder
+            cylinder.Placement = FreeCAD.Placement(op.start, rotation)
+
+            # Subtract the cylinder from the original shape to simulate drilling
+            shape = shape.cut(cylinder)
+
+        return shape
+
+
+    def make_obj(self, doc):
+        obj = doc.addObject("Part::Feature", self.name)
+        obj.Shape = self.apply_machine_ops()
+        obj.Placement = self.placement.placement
+        return obj
+
+
+def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir):
+    i_min, i_max = 0, 1
+    bb_a = part_a.aabb
+    bb_b = part_b.aabb
+    connect_plane_a = bb_a[i_max][dowel_dir]
+    connect_plane_b = bb_b[i_min][dowel_dir]
+    assert connect_plane_a == connect_plane_b, f"{connect_plane_a} != {connect_plane_b}"
+    edge_min = max(bb_a[i_min][edge_dir], bb_b[i_min][edge_dir]) + 20
+    edge_max = min(bb_a[i_max][edge_dir], bb_b[i_max][edge_dir]) - 20
+    if edge_max < edge_min:
+        return part_a, part_b
+    dowel_dist = 80
+    n_dowels = int((edge_max - edge_min) / dowel_dist)
+    n_dowels = max(2, n_dowels)
+
+    dowel_vec = [0, 0, 0]
+    dowel_vec[dowel_dir] = 1
+    edge_vec = [0, 0, 0]
+    edge_vec[edge_dir] = 1
+    dowel_ops = dowel_row(edge_min, edge_max, n_dowels, dowel_vec, edge_vec)
+    for d in dowel_ops:
+        dowel_left, dowel_right = d
+        position = [0, 0, 0]
+        position[dowel_dir] = connect_plane_a
+        position[dowel_dir] = connect_plane_a
+        remain_dir = 3 - dowel_dir - edge_dir
+        assert bb_a[i_min][remain_dir] == bb_b[i_min][remain_dir]
+        assert bb_a[i_max][remain_dir] == bb_b[i_max][remain_dir]
+        remain_pos = (bb_a[i_min][remain_dir] + bb_a[i_max][remain_dir]) / 2
+        position[remain_dir] = remain_pos
+        shift = translate(position)
+        part_a.apply_op(dowel_left.apply(shift))
+        part_b.apply_op(dowel_right.apply(shift))
+    return part_a, part_b

@@ -1,21 +1,30 @@
 from typing import *
 import sys
-
 import attrs
 import numpy as np
 from functools import cached_property
-# Adjust the path according to where FreeCAD is installed
-freecad_path = '/usr/lib/freecad-python3/lib'  # Set your FreeCAD installation path
-
-if freecad_path not in sys.path:
-    sys.path.append(freecad_path)
 
 import FreeCAD
 import Part
+from freecad import Transform, rotate, translate, fuse, make_box, make_cylinder
 
+
+def normalize(v):
+    """
+    normalize a numpy vector.
+    :param v:
+    :return:
+    """
+    norm = np.linalg.norm(v)
+    if norm == 0:
+       return v
+    return v / norm
+
+
+###################################š
 
 VecLike = Union[FreeCAD.Vector, Sequence[float]]
-def to_vec(v: VecLike) -> FreeCAD.Vector:
+def fvec(v: VecLike) -> FreeCAD.Vector:
     if isinstance(v, FreeCAD.Vector):
         return v
     else:
@@ -28,59 +37,6 @@ def vec_list(vec: FreeCAD.Vector):
 
 ##########################
 
-def rotate(axis:VecLike, angle:Union[float, VecLike]) -> 'Transform':
-    """
-    1. rotate by 'angle' degrees around the 'axis' vector
-    2. rotate from 'axis' vector to the 'angle' vector
-    """
-    axis = to_vec(axis)
-    if isinstance(angle, (float, int)):
-        rot = FreeCAD.Rotation(axis, angle)
-    else:
-        target_axis = to_vec(angle)
-        rot = FreeCAD.Rotation(axis, target_axis)
-    placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), rot)
-    return Transform(placement)
-
-def translate(pos: Union[FreeCAD.Vector, List[float]]) -> 'Transform':
-    pos = to_vec(pos)
-    placement = FreeCAD.Placement(pos, FreeCAD.Rotation())
-    return Transform(placement)
-
-@attrs.define
-class Transform:
-    placement: FreeCAD.Placement
-
-    def __matmul__(self, other: 'Transform'):
-        return Transform(self.placement.multiply(other.placement))
-
-    def __rmatmul__(self, shape: Union[Part.Shape, FreeCAD.Vector]):
-        """
-        Apply the stored transform to the right-hand operand (shape or vector).
-        """
-        if isinstance(shape, Part.Shape):
-
-            # Apply the placement transform to the shape
-            mat = self.placement.toMatrix()
-            transformed_shape = shape.transformGeometry(mat)
-            return transformed_shape
-        elif isinstance(shape, FreeCAD.Vector):
-            return self.placement.multVec(shape)
-        else:
-            raise TypeError(f"The right operand must be of type `Part.Shape` not {type(shape)}.")
-
-
-    def inverse(self) -> 'Transform':
-        return Transform(self.placement.inverse())
-
-    def rotation(self) -> 'Transform':
-        """
-        Taking just the rotation part of the placement.
-        :return:
-        """
-        rot = self.placement.Rotation
-        return Transform(FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), rot))
-
 
 ##########################š
 
@@ -91,6 +47,7 @@ def vector_origin():
 def vector_z():
     return FreeCAD.Vector(0, 0, 1)
 
+
 @attrs.define
 class DrillOp:
     """
@@ -99,14 +56,14 @@ class DrillOp:
     """
     radius = attrs.field(type=float)
     length = attrs.field(type=float)
-    start = attrs.field(type=FreeCAD.Vector, default=attrs.Factory(vector_origin), converter=to_vec)
-    direction = attrs.field(type=FreeCAD.Vector, default=attrs.Factory(vector_z), converter=to_vec)
+    start = attrs.field(type=FreeCAD.Vector, default=attrs.Factory(vector_origin), converter=fvec)
+    direction = attrs.field(type=FreeCAD.Vector, default=attrs.Factory(vector_z), converter=fvec)
 
 
     def __repr__(self):
         return f"Drill(r={self.radius}): [{vec_list(self.start)}] -> [{vec_list(self.direction)}] * {self.length}"
 
-    def apply(self, transform: Transform):
+    def _apply(self, transform: Transform):
         return DrillOp(
             self.radius,
             self.length,
@@ -114,13 +71,121 @@ class DrillOp:
             direction= self.direction @ transform.rotation(),
             )
 
+    def __matmul__(self, transform: Transform):
+        return self._apply(transform)
+
     @cached_property
     def tool_shape(self):
         return  (Part.makeCylinder(self.radius, self.length)
                  @ rotate([0, 0, 1], self.direction)
                  @ translate(self.start))
 
-CNCOperation = Union[DrillOp]
+    def copy(self):
+        return DrillOp(self.radius, self.length, self.start, self.direction)
+
+    def expand(self):
+        return [self]
+
+
+@attrs.define
+class MillOp:
+    """
+    Mill Operation bahaves like a Cylinder fused over a path.
+    Default start is at origin and drilling upward in Z axis.
+    """
+    radius = attrs.field(type=float)
+    length = attrs.field(type=float)    # Active length of the tool.
+    direction = attrs.field(type=FreeCAD.Vector, converter=fvec)
+    # Direction of the tool while moving
+    start = attrs.field(type=FreeCAD.Vector, converter=fvec)
+    # Start point of move
+    end = attrs.field(type=FreeCAD.Vector, converter=fvec)
+
+    def __repr__(self):
+        return f"Mill(r={self.radius}, l={self.length}): ^[{vec_list(self.direction)}], [{vec_list(self.start)}] -> [{vec_list(self.end)}]"
+
+    def _apply(self, transform: Transform):
+        return MillOp(
+            self.radius,
+            self.length,
+            self.direction  @ transform.rotation(),
+            start = self.start @ transform,
+            end = self.end @ transform
+            )
+
+    def __matmul__(self, transform: Transform):
+        return self._apply(transform)
+
+    @cached_property
+    def tool_shape(self):
+        radius, length = self.radius, self.length
+        direction, start, end = map(np.array, [self.direction, self.start, self.end])
+
+        # Normalize the direction vector
+        direction = normalize(direction)
+
+        # Ratation to canonical position.
+        # direction -> Z axis
+        # XYmovment_vec -> X axis
+        dir_rot = rotate(direction, [0, 0, 1])
+        move_vec = vec_list(fvec(end - start) @ dir_rot)
+        xy_move_vec = move_vec.copy()
+        xy_move_vec[2] = 0
+        move_rot = rotate(xy_move_vec, [1, 0, 0])
+        can_rot = dir_rot @ move_rot
+        can_end = fvec(move_vec) @ move_rot
+        assert abs(can_end.y) < 1e-6, f"Canonical end points: {vec_list(can_end)}"
+
+        # Create the milling tool (cylinder) at the start position
+        start_cylinder = make_cylinder(radius, length)
+        # Create the milling tool (cylinder) at the end position
+        end_cylinder = make_cylinder(radius, length) @ translate(can_end)
+
+        # Create profiles at the start and end positions
+        # Side profiles (rectangle wires)
+        rectangle_points = list(map(fvec, [
+            (0, -radius, 0),
+            (0, radius, 0),
+            (0, radius, length),
+            (0, -radius, length),
+            ( 0, -radius, 0)
+        ]))
+        rectangle_wire_start = Part.makePolygon(rectangle_points)
+        rectangle_wire_end = rectangle_wire_start.copy() @ translate(can_end)
+        # Loft between the start and end rectangle wires to create the side sweep
+        side_sweep = Part.makeLoft([rectangle_wire_start, rectangle_wire_end], True)
+
+        components = [start_cylinder, end_cylinder, side_sweep]
+        if abs(can_end.z) > 1e-6:
+            # move no perpendicular to tool 'direction'
+            # have to add top and bottom domes using loft
+
+            # Top circle wires at the start and end positions
+            top_circle_edge_start = Part.makeCircle(radius, fvec([0, 0, length]))
+            top_circle_wire_start = Part.Wire([top_circle_edge_start])
+            top_circle_wire_end = top_circle_wire_start.copy() @ translate(can_end)
+            # Loft between the top circle wires
+            top_sweep = Part.makeLoft([top_circle_wire_start, top_circle_wire_end], True)
+            components.append(top_sweep)
+
+            # Bottom circle wires at the start and end positions
+            bottom_circle_edge_start = Part.makeCircle(radius)
+            bottom_circle_wire_start = Part.Wire([bottom_circle_edge_start])
+            bottom_circle_wire_end = bottom_circle_wire_start.copy() @ translate(can_end)
+            # Loft between the bottom circle wires
+            bottom_sweep = Part.makeLoft([bottom_circle_wire_start, bottom_circle_wire_end], True)
+            components.append(bottom_sweep)
+
+        return fuse(components) @ can_rot.inverse() @ translate(start)
+
+    def copy(self):
+        return MillOp(self.radius, self.length, self.direction, self.start, self.end)
+
+    def expand(self):
+        return [self]
+
+
+CNCOperation = Union[DrillOp, MillOp, 'OperationList']
 
 class OperationList:
     def __init__(self, *ops):
@@ -129,5 +194,19 @@ class OperationList:
     def __iter__(self):
         return iter(self._ops)
 
-    def apply(self, transform):
-        return OperationList(*[x.apply(transform) for x in self._ops])
+    def _apply(self, transform):
+        return OperationList(*[x._apply(transform) for x in self._ops])
+
+    def __matmul__(self, transform: Transform):
+        return self._apply(transform)
+
+
+    def expand(self):
+        """
+        Return plain list of operation tree.
+        :return:
+        """
+        ops = []
+        for o in self._ops:
+            ops.extend(o.expand())
+        return ops

@@ -1,8 +1,5 @@
 """
 TODO:
-1. Form actual model after creating placed parts with drills, show all drils as single object
-2. List drill operations.
-3. Verify dowels
 4. Add restex (implemented)
 5: modify other drill parts
 6. add mill operation
@@ -130,7 +127,7 @@ class Wardrobe:
 
         self.parts = [] # List of parts
         self.placed_objects: List[ts.PlacedPart] = []
-        # self._pin_edge = ts.side_symmetric(ts.pin_edge(self.shelf_width))
+        self._pin_edge = ts.side_symmetric(ts.pin_edge(self.shelf_width))
         # self._rastex = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=False)
         # self._rastex_through = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=True)
         # self._vb_strip = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=False)
@@ -156,9 +153,10 @@ class Wardrobe:
             x_shift = pannel.position[0]
             tool_side = tool_l
         common_width = pannel.part.dimensions.width
-        tool_placement =  FreeCAD.Placement(FreeCAD.Vector(x_shift, common_width / 2, shelf.position[2]), FreeCAD.Rotation())
-        pannel.obj = ts.drill(pannel.obj, tool_side, tool_placement)
-        shelf.obj = ts.drill(shelf.obj, tool_side, tool_placement)
+        tool_placement =  ts.translate([x_shift, common_width / 2, shelf.position[2]])
+        pannel_tool, shelf_tool = tool_side
+        pannel.apply_op(pannel_tool @ tool_placement)
+        shelf.apply_op(shelf_tool @ tool_placement)
         #
         # for z_add in [-z_dist, 0, z_dist]:
         #     for y_shift in [shelf.part.width * 0.1, shelf.part.width * 0.9]:
@@ -186,11 +184,10 @@ class Wardrobe:
     def drill_rail(self, pannel:ts.PlacedPart, shelf:ts.PlacedPart, through:bool = False):
         self. drill_edge(pannel, shelf, self._rail)
 
-    def add_object(self, part:ts.WPart, placement) -> ts.PlacedPart:
-        if not isinstance(placement, FreeCAD.Vector):
-            placement = FreeCAD.Vector(*placement)
-        placement = ts.translate(placement)
-        placed = ts.PlacedPart(part, placement, name=f"{part.name}_{part.allocate()}")
+    def add_object(self, part:ts.WPart, position) -> ts.PlacedPart:
+        if isinstance(position, FreeCAD.Vector):
+            position = vec_to_list(position)
+        placed = ts.PlacedPart(part, position, name=f"{part.name}_{part.allocate()}")
         self.placed_objects.append(placed)
         return placed
 
@@ -252,17 +249,9 @@ class Wardrobe:
                 align_shift = (-bot_plank.width + self.thickness) / 2
             else:
                 align_shift = -bot_plank.width + self.thickness
-            bottom: ts.PlacedPart =  self.add_object(bot_part, [x_shift + align_shift, pannel_plank.width - bot_plank.length, 0])
+            bottom: ts.PlacedPart = self.add_object(bot_part, [x_shift + align_shift, pannel_plank.width - bot_plank.length, 0])
             bot_front_l, bottom = ts.dowel_connect(bot_front_l, bottom, dowel_dir=1, edge_dir=0)
-            #bot_front_r, bottom, tool_r = dowel_connect(bot_front_r, bottom, dowel_dir=1, edge_dir=0)
-            #if tool_l is None:
-            #    pass
-                #assert tool_r is not None
-                #self.add_object(ts.WPart(tool_r, 1, f'{bottom.name}_dowel_cut_r'), [0, 0, 0])
-            #else:
-                #if tool_r is not None:
-                #    self.add_object(ts.WPart(tool_r, 1, f'{bottom.name}_dowel_cut_r'), [0, 0, 0])
-            #    self.add_object(ts.WPart(tool_l, 1, f'{bottom.name}_dowel_cut_l'), [0, 0, 0])
+            bot_front_r, bottom = ts.dowel_connect(bot_front_r, bottom, dowel_dir=1, edge_dir=0)
 
             # shelf pairs
             x_shift+= self.thickness
@@ -318,7 +307,7 @@ class Wardrobe:
         """
         drill_vb_strip = None #self.drill_vb_strip
         drill_rastex = None #self.drill_rastex
-        drill_pins = None #self.drill_pins
+        drill_pins = self.drill_pins
         drill_rail = None # self.drill_rail
 
         col_0_shelves = [
@@ -384,8 +373,17 @@ class Wardrobe:
 
 
 def build_from_placed(doc, placed_parts: List[ts.PlacedPart]):
+    print("Placing components")
+    all_cuts = []
     for p in placed_parts:
-        p.make_obj(doc)
+        obj, cuts = p.make_obj(doc)
+        all_cuts.extend(cuts)
+    print("fuse cut objects")
+    cuts_shape = ts.fuse(all_cuts)
+    obj = doc.addObject("Part::Feature", "cuts")
+    obj.Shape = cuts_shape
+
+
 # panel1_group = doc.addObject("App::DocumentObjectGroup", "Panel1")
 # panel2_group = doc.addObject("App::DocumentObjectGroup", "Panel2")
 #

@@ -1,18 +1,16 @@
 from typing import *
 import sys
-
 import attrs
 import numpy as np
 from functools import cached_property
-# Adjust the path according to where FreeCAD is installed
-freecad_path = '/usr/lib/freecad-python3/lib'  # Set your FreeCAD installation path
 
-if freecad_path not in sys.path:
-    sys.path.append(freecad_path)
+import freecad
 
 import FreeCAD
 import Part
-from machine import DrillOp, OperationList, rotate, translate, Transform
+from machine import (DrillOp, MillOp, OperationList,
+                     rotate, translate, Transform,
+                     make_cylinder, make_box, fuse, fvec, vec_list)
 
 #Vector = np.ndarray
 
@@ -31,12 +29,7 @@ def add_object(doc, name, shape, translate, rotate = None):
 def aabb(bb:FreeCAD.BoundBox):
     return ((bb.XMin, bb.YMin, bb.ZMin), (bb.XMax, bb.YMax, bb.ZMax))
 
-def fuse(shapes):
-    assert len(shapes) > 0
-    result = shapes[0]
-    for s in shapes[1:]:
-        result = result.fuse(s)
-    return result
+
 
 
 
@@ -72,30 +65,35 @@ def drill(feature: Part.Feature, tool:'Shape', position:Union[FreeCAD.Placement,
 
 def pin():
     # pin real dimensions
-    pin_in_diam = 5
-    pin_in_l = 7
+    pin_in_diam = 5.0
+    pin_in_l = 7.0
     pin_out_diam = 7 + 0.5
     pin_out_l = 10 + 0.5
-
+    pin_z = pin_out_diam / 2
     # shelf drill extension
     box_dims = (pin_out_l, pin_out_diam, pin_out_diam/2)
     box = Part.makeBox(*box_dims, FreeCAD.Vector(0, -box_dims[1] / 2, ))
+    shelf_op = MillOp(pin_out_diam/2.0, pin_out_l,
+           direction=[1, 0, 0], start=[0, 0, -pin_z], end=[0, 0, +pin_z])
 
-    # Create the left barrel (inner)
-    left_barrel = Part.makeCylinder(pin_in_diam / 2, pin_in_l)
-    # Move the left barrel to be centered around the origin
-    left_barrel.translate(FreeCAD.Vector(0, 0, -pin_in_l))
+    # pannel drill
+    pannel_op = DrillOp(pin_in_diam/2, pin_in_l,
+            start=[0, 0, pin_z], direction=[-1, 0, 0])
 
-    # Create the right barrel (outer)
-    right_barrel = Part.makeCylinder(pin_out_diam / 2, pin_out_l)
-    # Move the right barrel to be centered around the origin
-    barrels = left_barrel.fuse(right_barrel)
-    barrels = barrels @ rotate([0, 1, 0], +90) @ translate([0, 0, pin_out_diam/2])
-
-    # Fuse the box with the barrel part
-    final_part = barrels.fuse(box)
-
-    return final_part
+    # # Create the left barrel (inner)
+    # left_barrel = Part.makeCylinder(pin_in_diam / 2, pin_in_l)
+    # # Move the left barrel to be centered around the origin
+    # left_barrel.translate(FreeCAD.Vector(0, 0, -pin_in_l))
+    #
+    # # Create the right barrel (outer)
+    # right_barrel = Part.makeCylinder(pin_out_diam / 2, pin_out_l)
+    # # Move the right barrel to be centered around the origin
+    # barrels = left_barrel.fuse(right_barrel)
+    # barrels = barrels @ rotate([0, 1, 0], +90) @ translate([0, 0, pin_out_diam/2])
+    #
+    # # Fuse the box with the barrel part
+    # final_part = barrels.fuse(box)
+    return pannel_op, shelf_op
 
 
 
@@ -109,17 +107,20 @@ def pin_edge(shelf_width):
     Z - shelf thickness
     :return:
     """
-    single_pin = pin()
+    pannel_pin, shelf_pin = pin()
     # Assume panel and shelf are objects with Placement
     z_step = 40
     dist_from_front = 40
     y_shift = shelf_width / 2 - dist_from_front
-    pins = [
-        single_pin.copy().translate(FreeCAD.Vector(0, y, z))
+    pins = lambda x_pin: [
+        (x_pin.copy()) @ (translate([0, y, z]))
         for z in [-z_step, 0, z_step]
         for y in [-y_shift, y_shift]
     ]
-    return fuse(pins)
+    return OperationList(
+        OperationList(*pins(pannel_pin)),
+              OperationList(*pins(shelf_pin))
+    )
 
 def dowel(thickness):
     """
@@ -153,7 +154,7 @@ def dowel_row(a, b, n, dowel_vec, edge_vec, left_extent=0):
     drill_left = DrillOp(diam / 2, left_extent + 0.5, direction=-np.array(dowel_vec))
     drill_right = DrillOp(diam / 2, (l -left_extent) + 0.5, direction=dowel_vec)
     dowel_pair = OperationList(drill_left, drill_right)
-    row = OperationList(*[dowel_pair.apply(translate(yy)) for yy in y_pos_vec])
+    row = OperationList(*[dowel_pair @ translate(yy) for yy in y_pos_vec])
     return row
 
 
@@ -258,9 +259,9 @@ def strong_edge(thickness, shelf_width, tool, through:bool=False):
     # - 260, -160, -120, -20, 20, 120, 160, 260
     return side_symmetric(fuse(parts))
 
-def side_symmetric(shape):
+def side_symmetric(shape: DrillOp):
     r_side = shape
-    l_side = shape.copy() @ rotate([0, 0, 1], 180)
+    l_side = shape @ (rotate([0, 0, 1], 180))
     return (l_side, r_side)
 
 def rail():
@@ -391,15 +392,17 @@ class PlacedPart:
     """
     part : WPart
     #position: FreeCAD.Vector       # Full placement object
-    placement: Transform
+    position: List[float]
     obj: 'Part.Feature' = None     # set after init
     name : str = ""
     machine_ops: List[Any] = attrs.Factory(list)
 
-    @property
-    def placement(self):
-        new_placement = FreeCAD.Placement(self.position, FreeCAD.Rotation())
-        return new_placement.multiply(self.part.shape.Placement)
+    @cached_property
+    def placement(self) -> Transform:
+        pos = fvec(self.position)
+        new_placement = FreeCAD.Placement(pos, FreeCAD.Rotation())
+        return Transform(new_placement * self.part.shape.Placement)
+
     @cached_property
     def aabb(self):
         final_shape = self.part.shape @ self.placement
@@ -409,36 +412,46 @@ class PlacedPart:
         return self.aabb[1][ax]
 
     def apply_op(self, drill_op):
+        """
+        Add machine operation to the list of operations
+        :param drill_op:
+        :return:
+        """
         inv_placement = self.placement.inverse()
-        drill_op = drill_op.apply(inv_placement)
-        self.machine_ops.append(drill_op)
+        drill_ops = (drill_op @ inv_placement).expand()
+        self.machine_ops.extend(drill_ops)
 
     def apply_machine_ops(self):
         shape = self.part.shape
+        cuts = []
         for op in self.machine_ops:
-            # Create a cylinder for the hole (drill) with the given radius and length
-            cylinder = Part.makeCylinder(op.radius, op.length)
-
-            # Create a placement for the cylinder based on the DrillOp start and direction
-            direction_normalized = op.direction.normalize()
-
-            # Define the rotation to align the cylinder along the direction vector
-            rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), direction_normalized)
-
-            # Apply the placement (translation + rotation) to the cylinder
-            cylinder.Placement = FreeCAD.Placement(op.start, rotation)
-
+            # # Create a cylinder for the hole (drill) with the given radius and length
+            # cylinder = Part.makeCylinder(op.radius, op.length)
+            #
+            # # Create a placement for the cylinder based on the DrillOp start and direction
+            # direction_normalized = op.direction.normalize()
+            #
+            # # Define the rotation to align the cylinder along the direction vector
+            # rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), direction_normalized)
+            #
+            # # Apply the placement (translation + rotation) to the cylinder
+            # cylinder.Placement = FreeCAD.Placement(op.start, rotation)
+            #
+            tool = op.tool_shape
+            placed_cut = tool.copy() @ self.placement
+            cuts.append(placed_cut)
             # Subtract the cylinder from the original shape to simulate drilling
-            shape = shape.cut(cylinder)
+            shape = shape.cut(tool)
 
-        return shape
+        return shape, cuts
 
 
     def make_obj(self, doc):
         obj = doc.addObject("Part::Feature", self.name)
-        obj.Shape = self.apply_machine_ops()
+        shape, cuts = self.apply_machine_ops()
+        obj.Shape = shape
         obj.Placement = self.placement.placement
-        return obj
+        return obj, cuts
 
 
 def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir):
@@ -472,6 +485,8 @@ def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir):
         remain_pos = (bb_a[i_min][remain_dir] + bb_a[i_max][remain_dir]) / 2
         position[remain_dir] = remain_pos
         shift = translate(position)
-        part_a.apply_op(dowel_left.apply(shift))
-        part_b.apply_op(dowel_right.apply(shift))
+        part_a.apply_op(dowel_left @ (shift))
+        part_b.apply_op(dowel_right @ (shift))
     return part_a, part_b
+
+

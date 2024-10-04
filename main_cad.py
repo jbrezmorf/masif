@@ -1,14 +1,10 @@
 """
 TODO:
-4. Add restex (implemented)
-5: modify other drill parts
-6. add mill operation
+6. complete dowels (vertical in pannels)
 7. add mills for rails and for main rail
+8. drills for fron pannels
 
 
- figure out where to place part signature, make common function to add the signature
-2. common mechanism to add parts and shift them automatically, add only parts we are working on
-3.
 
 FreeCAD notes:
 - boolean operations result into a shpae that is at its original place, but with zero Placement
@@ -128,10 +124,10 @@ class Wardrobe:
         self.parts = [] # List of parts
         self.placed_objects: List[ts.PlacedPart] = []
         self._pin_edge = ts.side_symmetric(ts.pin_edge(self.shelf_width))
-        # self._rastex = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=False)
-        # self._rastex_through = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=True)
-        # self._vb_strip = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=False)
-        # self._vb_strip_through = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=True)
+        self._rastex = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=False)
+        self._rastex_through = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=True)
+        self._vb_strip = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=False)
+        self._vb_strip_through = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=True)
         # self._rail = ts.rail()
         self.make_parts()
         #dirll()
@@ -266,6 +262,7 @@ class Wardrobe:
                     # check matching shelf in last
                     if not shelf_flag[0] or not shelf_flag[1]:
                         raise Exception(f"Missing continuing shelf, flag: {shelf_flag}.")
+                    shelf.placed = last_shelf.placed
                 else:
                     # new shelf
                     if shelf_flag[1] and shelf.part is not None:
@@ -305,22 +302,28 @@ class Wardrobe:
             structural shells
         :return:
         """
-        drill_vb_strip = None #self.drill_vb_strip
-        drill_rastex = None #self.drill_rastex
-        drill_pins = self.drill_pins
+        drill_vb_strip = self.drill_vb_strip
+        drill_rastex = self.drill_rastex
+        drill_pins = None # self.drill_pins
         drill_rail = None # self.drill_rail
+
+        top_shelves = lambda fittings : (
+            Shelf(1500, self.shelf_top_long, fittings),
+            Shelf(1770, self.shelf_top_long, drill_pins),
+            Shelf(2040, self.shelf_top_long, drill_pins)
+        )
 
         col_0_shelves = [
             Shelf(1250, self.drawer_30_24, drill_rail),
-            Shelf(1500, self.shelf_top_long, (drill_vb_strip, drill_rastex)),
-            Shelf(1770, self.shelf_top_long, drill_pins),
-            Shelf(2040, self.shelf_top_long, drill_pins)]
+            *top_shelves(fittings=(drill_vb_strip, drill_rastex))
+            ]
         col_1_shelves = [
             Shelf(330, self.drawer_40_30, drill_rail),
             Shelf(650, self.drawer_40_30, drill_rail),
             Shelf(970, self.drawer_40_24, drill_rail),
             Shelf(1230, self.shelf_40, drill_pins),
-            *col_0_shelves[1:]]
+            *top_shelves(fittings=(drill_rastex, drill_rastex))
+            ]
         col_2_shelves = [
             Shelf(330, self.drawer_40_20, drill_rail),
             Shelf(540, self.drawer_40_20, drill_rail),
@@ -339,13 +342,15 @@ class Wardrobe:
             Shelf(645, self.drawer_30_30, drill_rail),
             Shelf(960, self.shelf_30, drill_pins),
             Shelf(1230, self.shelf_30, drill_pins),
-            *col_0_shelves[1:]]
+            *top_shelves(fittings=(drill_rastex, drill_rastex))
+            ]
         col_6_shelves = [
             Shelf(330, self.shelf_40, drill_pins),
             Shelf(705, self.drawer_40_24, drill_rail),
             Shelf(960, self.shelf_40, drill_pins),
             Shelf(1230, self.shelf_40, drill_pins),
-            *col_0_shelves[1:]]
+            *top_shelves(fittings=(drill_rastex, drill_rastex))
+            ]
 
         left_pannel = VPannel(self.bottom_side, -1, self.vertical_panel)
         mid_long = VPannel(self.bottom, 0, self.vertical_panel)
@@ -376,6 +381,7 @@ def build_from_placed(doc, placed_parts: List[ts.PlacedPart]):
     print("Placing components")
     all_cuts = []
     for p in placed_parts:
+        print(p.name)
         obj, cuts = p.make_obj(doc)
         all_cuts.extend(cuts)
     print("fuse cut objects")

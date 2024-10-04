@@ -122,7 +122,7 @@ def pin_edge(shelf_width):
               OperationList(*pins(shelf_pin))
     )
 
-def dowel(thickness):
+def dowel(left_extent=0, dowel_vec=None):
     """
     Dowel extends left to be drilled to the pannel.
     :param thickness:
@@ -130,8 +130,14 @@ def dowel(thickness):
     """
     diam = 6
     l = 35
-    left_extent = -14
-    return Part.makeCylinder(diam / 2, l + 1) @ rotate([0, 1, 0], 90) @ translate([left_extent - 0.5, 0, thickness/2])
+    if left_extent == 0:
+        left_extent = l / 2
+    if dowel_vec is None:
+        dowel_vec = [1, 0, 0]
+    drill_left = DrillOp(diam / 2, left_extent + 0.5, direction=-np.array(dowel_vec))
+    drill_right = DrillOp(diam / 2, (l -left_extent) + 0.5, direction=dowel_vec)
+    dowel_pair = OperationList(drill_left, drill_right)
+    return dowel_pair
 
 def dowel_row(a, b, n, dowel_vec, edge_vec, left_extent=0):
     """
@@ -145,15 +151,8 @@ def dowel_row(a, b, n, dowel_vec, edge_vec, left_extent=0):
     :param left_extent:
     :return:
     """
-    diam = 6
-    l = 35
-    if left_extent == 0:
-        left_extent = l / 2
-
+    dowel_pair = dowel(left_extent, dowel_vec=dowel_vec)
     y_pos_vec = [y * np.array(edge_vec) for y in np.linspace(a, b, n)]
-    drill_left = DrillOp(diam / 2, left_extent + 0.5, direction=-np.array(dowel_vec))
-    drill_right = DrillOp(diam / 2, (l -left_extent) + 0.5, direction=dowel_vec)
-    dowel_pair = OperationList(drill_left, drill_right)
     row = OperationList(*[dowel_pair @ translate(yy) for yy in y_pos_vec])
     return row
 
@@ -198,11 +197,11 @@ def rastex(shelf_thickness, through:bool=False):
     # Create the pin_in cylinder (to the left of hetix, along X-axis with Y shift)
     shelf_drill = OperationList(
    DrillOp(hetix_diam / 2, hetix_l, start=[hetix_x, 0, 0]),
-        DrillOp(pin_in_diam / 2, pin_in_l, start = [0, 0, z_shift], direction=[1, 0, 0])
+        DrillOp(pin_out_diam / 2, pin_out_l, start = [0, 0, z_shift], direction=[1, 0, 0])
     )
     # Create the pin_out cylinder (to the right of hetix, along X-axis with Y shift)
-    pannel_dril = DrillOp(pin_out_diam / 2, pin_out_l, start=[0, 0, z_shift], direction=[-1, 0, 0])
-    return OperationList(pannel_dril, shelf_drill)
+    pannel_drill = DrillOp(pin_in_diam / 2, pin_in_l, start=[0, 0, z_shift], direction=[-1, 0, 0])
+    return OperationList(pannel_drill, shelf_drill)
 
 
 
@@ -236,28 +235,40 @@ def vb(shelf_thickness, through=False):
     pin_z_shift = 8
 
     # Create the hetix cylinder (vertical along Z-axis)
-    large = Part.makeCylinder(vb_diam_large / 2, vb_l_large) @ translate([vb_large_x, 0, 0])
-    small = Part.makeCylinder(vb_diam_small / 2, vb_l_small) @ translate([vb_small_x, 0, 0])
-    pin_out = Part.makeCylinder(pin_in_diam / 2, pin_in_l) @ rotate([0, 1, 0], -90) @ translate([0, 0, pin_z_shift])
+    # large = Part.makeCylinder(vb_diam_large / 2, vb_l_large) @ translate([vb_large_x, 0, 0])
+    # small = Part.makeCylinder(vb_diam_small / 2, vb_l_small) @ translate([vb_small_x, 0, 0])
+    # pin_out = Part.makeCylinder(pin_in_diam / 2, pin_in_l) @ rotate([0, 1, 0], -90) @ translate([0, 0, pin_z_shift])
 
     # Combine all parts into a single shape
-    combined = fuse([large, small, pin_out])
-    return combined
+    # combined = fuse([large, small, pin_out])
+
+    shelf_drill = OperationList(
+        DrillOp(vb_diam_large / 2.0, vb_l_large, start=[vb_large_x, 0, 0]),
+        DrillOp(vb_diam_small / 2.0, vb_l_small, start=[vb_small_x, 0])
+    )
+    # Create the pin_out cylinder (to the right of hetix, along X-axis with Y shift)
+    pannel_drill = DrillOp(pin_in_diam / 2.0, pin_in_l, start=[0, 0, pin_z_shift], direction=[-1, 0, 0])
+    return OperationList(pannel_drill, shelf_drill)
+
 
 
 def strong_edge(thickness, shelf_width, tool, through:bool=False):
     thickness = 18
-    _rastex = tool(thickness, through)
-    _dowel = dowel(thickness)
+    dowel_to_pannel = 14
+    rastex_pair = tool(thickness, through)
+    dowel_pair = dowel(left_extent=dowel_to_pannel) @ translate([0, 0, thickness/2.0])
     dist_from_front = 40
     y_shift = shelf_width / 2 - dist_from_front  # 260
-    parts = [_rastex, _dowel, _dowel, _dowel, _rastex]
+    parts = [rastex_pair, dowel_pair, dowel_pair, dowel_pair, rastex_pair]
+    pannel_parts, shelf_parts = zip(*parts)
     yy = [-y_shift, -120, 20, 160, y_shift]
-    parts = [
-        p.copy() @ translate([0, y, 0])
-        for p, y in zip(parts, yy)]
+    place = lambda parts : OperationList(*[
+        p @ translate([0, y, 0])
+        for p, y in zip(parts, yy)])
     # - 260, -160, -120, -20, 20, 120, 160, 260
-    return side_symmetric(fuse(parts))
+    placed = map(place, [pannel_parts, shelf_parts])
+    sides = side_symmetric(OperationList(*placed))
+    return sides
 
 def side_symmetric(shape: DrillOp):
     r_side = shape
@@ -437,6 +448,7 @@ class PlacedPart:
             # # Apply the placement (translation + rotation) to the cylinder
             # cylinder.Placement = FreeCAD.Placement(op.start, rotation)
             #
+            print("   apply ", repr(op))
             tool = op.tool_shape
             placed_cut = tool.copy() @ self.placement
             cuts.append(placed_cut)

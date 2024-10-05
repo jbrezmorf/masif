@@ -8,7 +8,7 @@ import freecad
 
 import FreeCAD
 import Part
-from machine import (DrillOp, MillOp, OperationList,
+from machine import (DrillOp, MillOp, NoneOp, OperationList,
                      rotate, translate, Transform,
                      make_cylinder, make_box, fuse, fvec, vec_list)
 
@@ -27,7 +27,7 @@ def add_object(doc, name, shape, translate, rotate = None):
 
 
 def aabb(bb:FreeCAD.BoundBox):
-    return ((bb.XMin, bb.YMin, bb.ZMin), (bb.XMax, bb.YMax, bb.ZMax))
+    return np.array( [(bb.XMin, bb.YMin, bb.ZMin), (bb.XMax, bb.YMax, bb.ZMax)] )
 
 
 
@@ -125,17 +125,28 @@ def pin_edge(shelf_width):
 def dowel(left_extent=0, dowel_vec=None):
     """
     Dowel extends left to be drilled to the pannel.
+    left_extent :
+    0 : dowel centered
+    >0 : abs(left_extent) is size of left drill
+    <0 : abs(left_extent) is size of right drill
     :param thickness:
     :return:
     """
     diam = 6
     l = 35
     if left_extent == 0:
-        left_extent = l / 2
+        right_extent = left_extent = l / 2
+    elif left_extent > 0:
+        right_extent = l - left_extent
+    elif left_extent < 0:
+        right_extent = abs(left_extent)
+        left_extent = l - right_extent
+    else:
+        raise ValueError("Non-real dowel extent.")
     if dowel_vec is None:
         dowel_vec = [1, 0, 0]
     drill_left = DrillOp(diam / 2, left_extent + 0.5, direction=-np.array(dowel_vec))
-    drill_right = DrillOp(diam / 2, (l -left_extent) + 0.5, direction=dowel_vec)
+    drill_right = DrillOp(diam / 2, right_extent + 0.5, direction=dowel_vec)
     dowel_pair = OperationList(drill_left, drill_right)
     return dowel_pair
 
@@ -305,17 +316,25 @@ def rail():
         (4, 538, 9)  # +/-9 hole
     ]
 
-    def side_fn(angle, holes):
-        drilled = [Part.makeCylinder((d - 2.5) / 2, x_depth)
-                   @ rotate([0, 1, 0], angle)
-                   @ translate([0, y - shelf_width/2 + y_shift, z + z_shift])
+    def side_fn(x_dir, holes):
+        ops = [DrillOp((d - 2.5) / 2.0, x_depth, direction=[x_dir, 0, 0])
+                   @ translate([0, y, z + z_shift])
                     for d, y, z in holes]
-        return fuse(drilled)
+        # total mill height = 44mm
+        rail_height = 44
+        ops.append(MillOp(rail_height / 2.0, 1.0, direction=[x_dir, 0, 0],
+                          start=[0, 0, z_shift], end=[0, shelf_width, z_shift]))
+        pannel_ops = OperationList(*ops)
+        shelf_op = NoneOp()
 
-    sides = [side_fn(angle, holes)
-             for angle, holes in zip((90, -90), (holes_l, holes_r))
-            ]
-    return tuple(sides)
+        # drill composed operations are relative to shlef_width center
+        return OperationList(pannel_ops, shelf_op) @ translate([0,  - shelf_width/2 + y_shift, 0])
+
+    side_ops = OperationList(
+        side_fn(x_dir=+1.0, holes=holes_l),
+        side_fn(x_dir=-1.0, holes=holes_r)
+    )
+    return side_ops
 
 
 def drawer(width, height, depth):
@@ -465,36 +484,81 @@ class PlacedPart:
         obj.Placement = self.placement.placement
         return obj, cuts
 
+def interval_intersect(bb_a, bb_b, rel_range = None):
+    i_min, i_max = 0, 1
+    if rel_range is None:
+        rel_range = (0.0, 1.0)
+    rel_a, rel_b = rel_range
+    a, b = max(bb_a[i_min], bb_b[i_min]), min(bb_a[i_max], bb_b[i_max])
+    return (1 - rel_a) * a + rel_a * b, (1 - rel_b) * a + rel_b * b
 
-def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir):
+
+def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir,
+                  other_pos=None, rel_range=(None, None, None), left_extent = 0):
+    """
+    Place row of connecting dowels for two rectangular, axes aligned parts.
+    The connecting surface is automatically detected from 'dowel_dir',
+    'edge_dir' lays in this surface; remaining axis is named 'other'
+    Dowel row extends over the connecting surface in the 'edge_dir' axis.
+    Position along 'other' axis is given as center of the connecting surface by default
+    or its absolute position could be given by 'other_pos'.
+    Relative edge edtend or other dir position could be limited by rel_range.
+    Rel range is tuple of three items one for each axis, each could be None (full extend)
+    or pair of numbers in interval (0, 1.0) denoting sub range of connecting surface.
+    :param dowel_dir: 0| 1 | 2; axis of dowels
+    :param edge_dir: 0| 1 | 2; axis of the dowel row
+    :param other_pos:
+    :return:
+    """
     i_min, i_max = 0, 1
     bb_a = part_a.aabb
     bb_b = part_b.aabb
-    connect_plane_a = bb_a[i_max][dowel_dir]
-    connect_plane_b = bb_b[i_min][dowel_dir]
+    connect_plane_a = bb_a[i_max, dowel_dir]
+    connect_plane_b = bb_b[i_min, dowel_dir]
     assert connect_plane_a == connect_plane_b, f"{connect_plane_a} != {connect_plane_b}"
-    edge_min = max(bb_a[i_min][edge_dir], bb_b[i_min][edge_dir]) + 20
-    edge_max = min(bb_a[i_max][edge_dir], bb_b[i_max][edge_dir]) - 20
+    edge_min, edge_max = interval_intersect(bb_a[:, edge_dir], bb_b[:, edge_dir], rel_range[edge_dir])
+    edge_min, edge_max = edge_min + 20, edge_max -20
     if edge_max < edge_min:
         return part_a, part_b
     dowel_dist = 80
     n_dowels = int((edge_max - edge_min) / dowel_dist)
-    n_dowels = max(2, n_dowels)
+    if n_dowels < 3:
+        # 2 dowels case
+        edge_min -= 10
+        edge_max += 10
+        # compute remaining dist
+        dowel_dist = edge_max - edge_min
+        if edge_max - edge_min < 1.0:
+            return part_a, part_b
+        if dowel_dist > 20:
+            n_dowels = 2
+        elif dowel_dist > 0:
+            n_dowels = 1
+        else:
+            # n_dowels == 0
+            return part_a, part_b
 
     dowel_vec = [0, 0, 0]
-    dowel_vec[dowel_dir] = 1
+    dowel_vec[dowel_dir] = 1.0
     edge_vec = [0, 0, 0]
-    edge_vec[edge_dir] = 1
-    dowel_ops = dowel_row(edge_min, edge_max, n_dowels, dowel_vec, edge_vec)
+    edge_vec[edge_dir] = 1.0
+    dowel_ops = dowel_row(edge_min, edge_max, n_dowels, dowel_vec, edge_vec, left_extent=left_extent)
     for d in dowel_ops:
         dowel_left, dowel_right = d
         position = [0, 0, 0]
         position[dowel_dir] = connect_plane_a
         position[dowel_dir] = connect_plane_a
         remain_dir = 3 - dowel_dir - edge_dir
-        assert bb_a[i_min][remain_dir] == bb_b[i_min][remain_dir]
-        assert bb_a[i_max][remain_dir] == bb_b[i_max][remain_dir]
-        remain_pos = (bb_a[i_min][remain_dir] + bb_a[i_max][remain_dir]) / 2
+        if other_pos is None:
+            other_min, other_max = interval_intersect(bb_a[:, remain_dir], bb_b[:, remain_dir], rel_range[remain_dir])
+            #assert bb_a[i_min][remain_dir] == bb_b[i_min][remain_dir]
+            #assert bb_a[i_max][remain_dir] == bb_b[i_max][remain_dir]
+            if (other_max - other_min) < 16:
+                # zero connecting surface
+                return part_a, part_b
+            remain_pos = (other_min + other_max) / 2.0
+        else:
+            remain_pos = other_pos
         position[remain_dir] = remain_pos
         shift = translate(position)
         part_a.apply_op(dowel_left @ (shift))

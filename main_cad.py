@@ -1,7 +1,6 @@
 """
 TODO:
-6. complete dowels (vertical in pannels)
-7. add mills for rails and for main rail
+7. add mills for front rails and for main rail
 8. drills for fron pannels
 
 
@@ -44,7 +43,7 @@ import attrs
 def vec_to_list(vec:FreeCAD.Vector):
     return (vec.x, vec.y, vec.z)
 
-def merge_shelves(list1, list2):
+def merge_shelves(list1: List['Shelf'], list2 : List['Shelf']) -> Tuple[float, List['Shelf'], List['Shelf']]:
     # Create dictionaries mapping height to objects
     dict1 = {obj.height: obj for obj in list1}
     dict2 = {obj.height: obj for obj in list2}
@@ -128,10 +127,8 @@ class Wardrobe:
         self._rastex_through = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=True)
         self._vb_strip = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=False)
         self._vb_strip_through = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=True)
-        # self._rail = ts.rail()
+        self._rail = ts.rail()
         self.make_parts()
-        #dirll()
-        #separate()
 
 
 
@@ -203,13 +200,16 @@ class Wardrobe:
 
         :return: composed wardrobe body object of the parst
         """
+        cross_dowel_extent = 14
         print("Create columns")
 
         # bottom front
         y_shift = self.vertical_panel.dimensions.width - self.bottom.dimensions.length - self.bottom_front_L.dimensions.width
         bot_front_l = self.add_object(self.bottom_front_L, [0, y_shift, 0])
         bot_front_r = self.add_object(self.bottom_front_R, [bot_front_l.part.dimensions.length, y_shift, 0] )
-        bot_front_l, bot_front_r = ts.dowel_connect(bot_front_l, bot_front_r, dowel_dir=0, edge_dir=1)
+        # in colision with perpendicular bottom part, well conected by that
+        bot_front_l, bot_front_r = ts.dowel_connect(bot_front_l, bot_front_r, dowel_dir=0, edge_dir=1,
+                                                    rel_range=[None, (0, 0.7), None])
 
         # ceiling
         y_shift = -100
@@ -248,10 +248,29 @@ class Wardrobe:
             bottom: ts.PlacedPart = self.add_object(bot_part, [x_shift + align_shift, pannel_plank.width - bot_plank.length, 0])
             bot_front_l, bottom = ts.dowel_connect(bot_front_l, bottom, dowel_dir=1, edge_dir=0)
             bot_front_r, bottom = ts.dowel_connect(bot_front_r, bottom, dowel_dir=1, edge_dir=0)
+            bottom, pannel_placed = ts.dowel_connect(bottom, pannel_placed, dowel_dir=2, edge_dir=1, left_extent=cross_dowel_extent)
+            bot_front_l, pannel_placed = ts.dowel_connect(bot_front_l, pannel_placed, dowel_dir=2, edge_dir=1,
+                                                          rel_range = [None, [0, 0.7], None], left_extent=cross_dowel_extent)
+            bot_front_r, pannel_placed = ts.dowel_connect(bot_front_r, pannel_placed, dowel_dir=2, edge_dir=1,
+                                                          rel_range = [None, [0, 0.7], None], left_extent=cross_dowel_extent)
 
             # shelf pairs
             x_shift+= self.thickness
             shelf_pairs = merge_shelves(last.shelves, col.shelves)
+
+            # top dowels
+            # search for shelf at the top of pannel or use all ceiling parts.
+            z_max = pannel_placed.aabb[1, 2]
+            top_shlef =[ (last, current)  for h, last, current in shelf_pairs if abs(h - z_max) <1e-6]
+            if top_shlef:
+                assert len(top_shlef) == 1
+                last_shelf, shlef = top_shlef[0]
+                assert last_shelf.part == shelf.part
+                ts.dowel_connect(pannel_placed, last_shelf.placed, dowel_dir=2, edge_dir=1, left_extent=-cross_dowel_extent)
+            else:
+                for c in [ceil_a, ceil_b, ceil_c]:
+                    ts.dowel_connect(pannel_placed, c, dowel_dir=2, edge_dir=1, left_extent=-cross_dowel_extent)
+
             for height, last_shelf, shelf in shelf_pairs:
                 print(f"    shelf_h: {height}")
                 shelf_flag = (last_shelf is not None, shelf is not None)
@@ -302,10 +321,10 @@ class Wardrobe:
             structural shells
         :return:
         """
-        drill_vb_strip = self.drill_vb_strip
-        drill_rastex = self.drill_rastex
+        drill_vb_strip = None # self.drill_vb_strip
+        drill_rastex = None # self.drill_rastex
         drill_pins = None # self.drill_pins
-        drill_rail = None # self.drill_rail
+        drill_rail = self.drill_rail
 
         top_shelves = lambda fittings : (
             Shelf(1500, self.shelf_top_long, fittings),

@@ -47,6 +47,19 @@ def vector_origin():
 def vector_z():
     return FreeCAD.Vector(0, 0, 1)
 
+class NoneOp:
+
+    def _apply(self, transform: Transform):
+        return self
+
+    def __matmul__(self, transform: Transform):
+        return self
+
+    def copy(self):
+        return self
+
+    def expand(self):
+        return []
 
 @attrs.define
 class DrillOp:

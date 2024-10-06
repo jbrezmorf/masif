@@ -1,7 +1,8 @@
 """
 TODO:
-7. add mills for front rails and for main rail
-8. drills for fron pannels
+- add check box with height 56, that should be gap between fron_panel and ceil
+- move front top cover 30 from edge of ceil, move front pannels
+- add mill to pannels for movement
 
 
 
@@ -14,6 +15,9 @@ FreeCAD notes:
 import sys
 from typing import *
 from pathlib import Path
+
+import freecad
+
 # Get the directory of the current script
 script_dir = Path(__file__).parent
 import os
@@ -92,6 +96,7 @@ class Wardrobe:
     def __init__(self, workdir):
         self.thickness = 18
         self.shelf_width = 600
+        self.draft = False #True
 
         # Load the ODS file
         # Replace 'your_file.ods' with the path to your ODS file
@@ -205,6 +210,7 @@ class Wardrobe:
 
         # bottom front
         y_shift = self.vertical_panel.dimensions.width - self.bottom.dimensions.length - self.bottom_front_L.dimensions.width
+        print("bottom_front y shift ")
         bot_front_l = self.add_object(self.bottom_front_L, [0, y_shift, 0])
         bot_front_r = self.add_object(self.bottom_front_R, [bot_front_l.part.dimensions.length, y_shift, 0] )
         # in colision with perpendicular bottom part, well conected by that
@@ -222,10 +228,15 @@ class Wardrobe:
         #self.add_object(ts.WPart(tool, 1, 'ceil_dowel_cut'), [0, 0, 0])
 
         # front cover
+        y_cover = y_shift + 30
         z_shift = z_shift - self.middle_front_A.dimensions.width
-        cover_a = self.add_object(self.middle_front_A, [0, y_shift, z_shift])
-        cover_b = self.add_object(self.middle_front_B, [cover_a.part.dimensions.length, y_shift, z_shift])
+        cover_a = self.add_object(self.middle_front_B, [0, y_cover, z_shift])
+        cover_b = self.add_object(self.middle_front_A, [cover_a.part.dimensions.length, y_cover, z_shift])
         cover_a, cover_b = ts.dowel_connect(cover_a, cover_b, dowel_dir=0, edge_dir=2)
+        ts.dowel_connect(cover_a, ceil_a, dowel_dir=2, edge_dir=0)
+        ts.dowel_connect(cover_a, ceil_b, dowel_dir=2, edge_dir=0)
+        ts.dowel_connect(cover_b, ceil_a, dowel_dir=2, edge_dir=0)
+        ts.dowel_connect(cover_b, ceil_b, dowel_dir=2, edge_dir=0)
         #self.add_object(ts.WPart(tool, 1, 'front_dowel_cut'), [0, 0, 0])
 
 
@@ -299,6 +310,38 @@ class Wardrobe:
 
             x_shift+= col.width
 
+        total_x = x_shift
+        print("Total X dim: ", total_x)
+
+        # front pannels
+        y_shift = y_cover + self.thickness + 2
+        # top rail with 10 dist from front reference plane of interrior
+        # pannel placed at outer rail
+
+        # pannel shift from front reference plane at y=0
+        z_shift = self.thickness + 7 # slider part specification
+        x_dim_pannel = self.front_panel.dimensions.width
+        front_l = self.add_object(self.front_panel, [total_x / 2.0 - x_dim_pannel, y_shift, z_shift])
+        front_r = self.add_object(self.front_panel, [total_x / 2.0, y_shift, z_shift])
+        for f in [front_l, front_r]:
+            # Drill pannel holes for slider
+            ts.drill_sliders(f)
+            # top pannels wheels
+            ts.drill_wheels(f)
+        bot_mill = ts.bottom_slider_profile(
+            x_dim=total_x, y_shift=y_shift + self.thickness / 2.0, z_shift=self.thickness)
+        bot_front_l.apply_op(bot_mill)
+        bot_front_r.apply_op(bot_mill)
+
+        # test box
+        dims = (front_r.aabb[1, 0] - front_l.aabb[0, 0], 50, 56)
+        top_rail_box = freecad.make_box(dims, origin=[0, cover_a.aabb[1, 1], cover_a.aabb[1, 2] - dims[2]])
+        self.add_object(ts.WPart(top_rail_box, 1, "top_rail"), [0, 0, 0])
+        # top front pannels
+        #self.add_object(self.ceil_front_side, [])
+        #self.add_object(self.ceil__front_middle, [])
+
+
     def make_parts(self):
         """
         DEscription of the main warderobe body.
@@ -321,10 +364,16 @@ class Wardrobe:
             structural shells
         :return:
         """
-        drill_vb_strip = None # self.drill_vb_strip
-        drill_rastex = None # self.drill_rastex
-        drill_pins = None # self.drill_pins
-        drill_rail = self.drill_rail
+        if self.draft:
+            drill_vb_strip = None
+            drill_rastex = None
+            drill_pins = None
+            drill_rail = None
+        else:
+            drill_vb_strip = self.drill_vb_strip
+            drill_rastex = self.drill_rastex
+            drill_pins = self.drill_pins
+            drill_rail = self.drill_rail
 
         top_shelves = lambda fittings : (
             Shelf(1500, self.shelf_top_long, fittings),
@@ -388,26 +437,33 @@ class Wardrobe:
 
         body = self.construct_columns(columns)
 
-    def list_operations(self):
-        print("\n\nOpeartions:\n")
-        for obj in self.placed_objects:
-            print(obj.name)
-            for op in obj.machine_ops:
-                print("    ", op)
+    def list_operations(self, fname):
+        with open(fname, "w") as f:
+            for obj in self.placed_objects:
+                f.write(f"{obj.name}\n")
+                for op in obj.machine_ops:
+                    f.write(f"    {op}\n")
 
 
 def build_from_placed(doc, placed_parts: List[ts.PlacedPart]):
     print("Placing components")
     all_cuts = []
+    all_objects = []
     for p in placed_parts:
         print(p.name)
         obj, cuts = p.make_obj(doc)
+        # Export the selected objects to a STEP file
+        Part.export([obj], f"{p.name}.step")
+        all_objects.append(obj)
         all_cuts.extend(cuts)
     print("fuse cut objects")
-    cuts_shape = ts.fuse(all_cuts)
-    obj = doc.addObject("Part::Feature", "cuts")
-    obj.Shape = cuts_shape
+    #cuts_shape = ts.fuse(all_cuts)
+    cuts_shape = Part.makeCompound(all_cuts)
+    cuts_obj = doc.addObject("Part::Feature", "cuts compound")
+    cuts_obj.Shape = cuts_shape
+    Part.export([cuts_obj], "cuts.step")
 
+    Part.export(all_objects, "waredrobe.step")
 
 # panel1_group = doc.addObject("App::DocumentObjectGroup", "Panel1")
 # panel2_group = doc.addObject("App::DocumentObjectGroup", "Panel2")
@@ -509,7 +565,7 @@ else:
 doc = FreeCAD.ActiveDocument  # Get the cleared (or new) document
 
 w = Wardrobe(script_dir)
-w.list_operations()
+w.list_operations("operations_list.txt")
 build_from_placed(doc, w.placed_objects)
 
 doc.recompute()

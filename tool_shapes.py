@@ -510,6 +510,7 @@ def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir,
     :param other_pos:
     :return:
     """
+    # return part_a, part_b   # Temporarly disable all dowels
     i_min, i_max = 0, 1
     bb_a = part_a.aabb
     bb_b = part_b.aabb
@@ -565,4 +566,58 @@ def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir,
         part_b.apply_op(dowel_right @ (shift))
     return part_a, part_b
 
+def bottom_slider():
+    """
+    Origin at slider center in X and Y, at slider/pannel connectin in Z
+    axis.
+    :return:
+    """
+    return OperationList(
+        DrillOp(8.0 / 2, 10, start=[-16, 0, 0]),
+        DrillOp(8.0 / 2, 10, start=[+16, 0, 0])
+        )
 
+def drill_sliders(front_pannel:PlacedPart):
+    x_edge_dist = 32 / 2 + 30
+    min_aabb, max_aabb = front_pannel.aabb
+    thickness = max_aabb[1] - min_aabb[1]
+    z_pos = min_aabb[2]
+    y_pos = (min_aabb[1] + max_aabb[1]) / 2.0
+    front_pannel.apply_op(OperationList(
+        bottom_slider() @ translate([min_aabb[0] + x_edge_dist, y_pos, z_pos]),
+        bottom_slider() @ translate([max_aabb[0] - x_edge_dist, y_pos, z_pos]),
+    ))
+
+def bottom_slider_profile(x_dim, y_shift, z_shift):
+    # bottom slider profile
+    return MillOp(7.5 / 2.0, 8, direction=[0, 0, -1], start=[0, y_shift, z_shift], end=[x_dim, y_shift, z_shift])
+
+
+def top_wheel(thickness: float) -> OperationList:
+    """
+    Connection of single top wheel, origin at wheel center in X,
+    pannel center in Y,
+    pannel top in Z
+    :return:
+    """
+    single_bolt = lambda x : [
+            DrillOp(5.5 / 2, 40, direction=[0, 0, -1], start=[x, 0, 0]),
+            DrillOp(12 / 2.0, 14, direction=[0, -1, 0], start=[x, thickness/2.0 , -40])
+            ]
+    bolt_dist = 64
+    ops = single_bolt(x=-bolt_dist / 2.0) + single_bolt(x=bolt_dist / 2.0)
+    return OperationList(*ops)
+
+
+def drill_wheels(front_pannel:PlacedPart):
+    bolt_dist = 64
+    x_edge_dist = bolt_dist / 2.0 + 50
+    min_aabb, max_aabb = front_pannel.aabb
+    thickness = max_aabb[1] - min_aabb[1]
+    z_pos = max_aabb[2]
+    y_pos = (min_aabb[1] + max_aabb[1]) / 2.0
+    wheel = top_wheel(thickness)
+    front_pannel.apply_op(OperationList(
+        wheel @ translate([min_aabb[0] + x_edge_dist, y_pos, z_pos]),
+        wheel @ translate([max_aabb[0] - x_edge_dist, y_pos, z_pos]),
+    ))

@@ -4,6 +4,13 @@ TODO:
 - move front top cover 30 from edge of ceil, move front pannels
 - add mill to pannels for movement
 
+Dowel diameter should match plane
+dowel_diam / thickness in interval (2/5, 3/5)
+for thickness 18, we should use 8 mm dowels.
+Connections overview: https://publi.cz/books/164/01.html
+
+ChatGPT recommnet dowel distance 100 to 150 mm, for safety I will use 100mm distance
+Bit problematic are two dowels of the strong_edge connection.
 
 
 FreeCAD notes:
@@ -96,11 +103,24 @@ class Wardrobe:
     def __init__(self, workdir):
         self.thickness = 18
         self.shelf_width = 600
-        self.draft = False #True
+        self.draft = True
+        self.dowel_diam = 8
+        self.dowel_len = 35
+        self.common_dowel_dist = 100
+        self.rail_pannel_predrill = 3   # screw diam 3mm / 5mm
+        self.rail_height = 44
+        self.rail_thickness = 12.5
+
 
         # Load the ODS file
         # Replace 'your_file.ods' with the path to your ODS file
         df = pd.read_excel(workdir / 'Objednávka MAPH.ods', engine='odf', header=None)
+
+        self.dowel = lambda *a, **b : ts.dowel(*a, **b, diam=self.dowel_diam, length=self.dowel_len)
+        self.strong_edge = lambda *a, **b : ts.strong_edge(*a, **b, dowel_fn=self.dowel)
+        self.dowel_row = lambda *a, **b : ts.dowel_row(*a, **b, dowel_fn=self.dowel)
+        self.dowel_connect = lambda *a, **b: ts.dowel_connect(*a, **b,
+                             dowel_row_fn=self.dowel_row, dowel_dist=self.common_dowel_dist)
 
         # Filter rows where the 'I' column is not empty
         valid = df.iloc[:, ord('I') - ord('A')].notna()
@@ -112,27 +132,31 @@ class Wardrobe:
         width = df.iloc[:, ord('C') - ord('A')]
         rot_ax = df.iloc[:, ord('D') - ord('A')]
         for i, s, l, w, r, n in zip(identifier, suffix, length, width, rot_ax, n_parts):
-            print("Creating part:", i)
             part = ts.WPart.construct(i, s, l, w, r, n, thick=self.thickness)
+            print("Creating part:", part)
             setattr(self, part.name, part)
 
+        z_shift = -8
+        rail = ts.Rail(self.rail_height, self.rail_thickness)
+        drawer_fn = lambda dx, dz, n : ts.Drawer.make([dx, self.shelf_width, dz], n, z_shift, rail)
+
         # drawers
-        self.drawer_40_24 = ts.WPart(ts.drawer(390, 240, self.shelf_width), 2, 'drawer_40_24')
-        self.drawer_40_30 = ts.WPart(ts.drawer(390, 300, self.shelf_width), 2, 'drawer_40_30')
-        self.drawer_40_20 = ts.WPart(ts.drawer(390, 200, self.shelf_width), 6, 'drawer_40_20')
-        self.drawer_30_24 = ts.WPart(ts.drawer(300, 240, self.shelf_width), 1, 'drawer_30_24')
-        self.drawer_30_30 = ts.WPart(ts.drawer(300, 300, self.shelf_width), 2, 'drawer_30_30')
+        self.drawer_40_24 = drawer_fn(390, 240, 2)
+        self.drawer_40_30 =  drawer_fn(390, 300,  2)
+        self.drawer_40_20 =  drawer_fn(390, 200,  6)
+        self.drawer_30_24 =  drawer_fn(300, 240,  1)
+        self.drawer_30_30 =  drawer_fn(300, 300,  2)
 
         # Create a new document
 
         self.parts = [] # List of parts
         self.placed_objects: List[ts.PlacedPart] = []
         self._pin_edge = ts.side_symmetric(ts.pin_edge(self.shelf_width))
-        self._rastex = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=False)
-        self._rastex_through = ts.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=True)
-        self._vb_strip = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=False)
-        self._vb_strip_through = ts.strong_edge(self.thickness, self.shelf_width, ts.vb, through=True)
-        self._rail = ts.rail()
+        self._rastex =  self.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=False)
+        self._rastex_through =  self.strong_edge(self.thickness, self.shelf_width, ts.rastex, through=True)
+        self._vb_strip =  self.strong_edge(self.thickness, self.shelf_width, ts.vb, through=False)
+        self._vb_strip_through =  self.strong_edge(self.thickness, self.shelf_width, ts.vb, through=True)
+        self._rail = self.drawer_40_30.rail_drill(self.rail_pannel_predrill)
         self.make_parts()
 
 
@@ -180,7 +204,7 @@ class Wardrobe:
             self.drill_edge(pannel, shelf, self._vb_strip)
 
     def drill_rail(self, pannel:ts.PlacedPart, shelf:ts.PlacedPart, through:bool = False):
-        self. drill_edge(pannel, shelf, self._rail)
+        self.drill_edge(pannel, shelf, self._rail)
 
     def add_object(self, part:ts.WPart, position) -> ts.PlacedPart:
         if isinstance(position, FreeCAD.Vector):
@@ -214,7 +238,7 @@ class Wardrobe:
         bot_front_l = self.add_object(self.bottom_front_L, [0, y_shift, 0])
         bot_front_r = self.add_object(self.bottom_front_R, [bot_front_l.part.dimensions.length, y_shift, 0] )
         # in colision with perpendicular bottom part, well conected by that
-        bot_front_l, bot_front_r = ts.dowel_connect(bot_front_l, bot_front_r, dowel_dir=0, edge_dir=1,
+        bot_front_l, bot_front_r =  self.dowel_connect(bot_front_l, bot_front_r, dowel_dir=0, edge_dir=1,
                                                     rel_range=[None, (0, 0.7), None])
 
         # ceiling
@@ -223,8 +247,8 @@ class Wardrobe:
         ceil_a = self.add_object(self.ceil_A, [0, y_shift, z_shift])
         ceil_b = self.add_object(self.ceil_B, [ceil_a.part.dimensions.length, y_shift, z_shift])
         ceil_c = self.add_object(self.ceil_C, [ceil_a.part.dimensions.length, y_shift + 600, z_shift])
-        ceil_a, ceil_b = ts.dowel_connect(ceil_a, ceil_b, dowel_dir=0, edge_dir=1)
-        ceil_b, ceil_c = ts.dowel_connect(ceil_b, ceil_c, dowel_dir=1, edge_dir=0)
+        ceil_a, ceil_b =  self.dowel_connect(ceil_a, ceil_b, dowel_dir=0, edge_dir=1)
+        ceil_b, ceil_c =  self.dowel_connect(ceil_b, ceil_c, dowel_dir=1, edge_dir=0)
         #self.add_object(ts.WPart(tool, 1, 'ceil_dowel_cut'), [0, 0, 0])
 
         # front cover
@@ -232,11 +256,11 @@ class Wardrobe:
         z_shift = z_shift - self.middle_front_A.dimensions.width
         cover_a = self.add_object(self.middle_front_B, [0, y_cover, z_shift])
         cover_b = self.add_object(self.middle_front_A, [cover_a.part.dimensions.length, y_cover, z_shift])
-        cover_a, cover_b = ts.dowel_connect(cover_a, cover_b, dowel_dir=0, edge_dir=2)
-        ts.dowel_connect(cover_a, ceil_a, dowel_dir=2, edge_dir=0)
-        ts.dowel_connect(cover_a, ceil_b, dowel_dir=2, edge_dir=0)
-        ts.dowel_connect(cover_b, ceil_a, dowel_dir=2, edge_dir=0)
-        ts.dowel_connect(cover_b, ceil_b, dowel_dir=2, edge_dir=0)
+        cover_a, cover_b =  self.dowel_connect(cover_a, cover_b, dowel_dir=0, edge_dir=2)
+        for cov in [cover_a, cover_b]:
+            for ceil in [ceil_a, ceil_b]:
+                 self.dowel_connect(cov, ceil, dowel_dir=2, edge_dir=0,
+                                    left_extent=-14)
         #self.add_object(ts.WPart(tool, 1, 'front_dowel_cut'), [0, 0, 0])
 
 
@@ -257,12 +281,12 @@ class Wardrobe:
             else:
                 align_shift = -bot_plank.width + self.thickness
             bottom: ts.PlacedPart = self.add_object(bot_part, [x_shift + align_shift, pannel_plank.width - bot_plank.length, 0])
-            bot_front_l, bottom = ts.dowel_connect(bot_front_l, bottom, dowel_dir=1, edge_dir=0)
-            bot_front_r, bottom = ts.dowel_connect(bot_front_r, bottom, dowel_dir=1, edge_dir=0)
-            bottom, pannel_placed = ts.dowel_connect(bottom, pannel_placed, dowel_dir=2, edge_dir=1, left_extent=cross_dowel_extent)
-            bot_front_l, pannel_placed = ts.dowel_connect(bot_front_l, pannel_placed, dowel_dir=2, edge_dir=1,
+            bot_front_l, bottom =  self.dowel_connect(bot_front_l, bottom, dowel_dir=1, edge_dir=0)
+            bot_front_r, bottom =  self.dowel_connect(bot_front_r, bottom, dowel_dir=1, edge_dir=0)
+            bottom, pannel_placed =  self.dowel_connect(bottom, pannel_placed, dowel_dir=2, edge_dir=1, left_extent=cross_dowel_extent)
+            bot_front_l, pannel_placed =  self.dowel_connect(bot_front_l, pannel_placed, dowel_dir=2, edge_dir=1,
                                                           rel_range = [None, [0, 0.7], None], left_extent=cross_dowel_extent)
-            bot_front_r, pannel_placed = ts.dowel_connect(bot_front_r, pannel_placed, dowel_dir=2, edge_dir=1,
+            bot_front_r, pannel_placed =  self.dowel_connect(bot_front_r, pannel_placed, dowel_dir=2, edge_dir=1,
                                                           rel_range = [None, [0, 0.7], None], left_extent=cross_dowel_extent)
 
             # shelf pairs
@@ -277,10 +301,10 @@ class Wardrobe:
                 assert len(top_shlef) == 1
                 last_shelf, shlef = top_shlef[0]
                 assert last_shelf.part == shelf.part
-                ts.dowel_connect(pannel_placed, last_shelf.placed, dowel_dir=2, edge_dir=1, left_extent=-cross_dowel_extent)
+                self.dowel_connect(pannel_placed, last_shelf.placed, dowel_dir=2, edge_dir=1, left_extent=-cross_dowel_extent)
             else:
                 for c in [ceil_a, ceil_b, ceil_c]:
-                    ts.dowel_connect(pannel_placed, c, dowel_dir=2, edge_dir=1, left_extent=-cross_dowel_extent)
+                     self.dowel_connect(pannel_placed, c, dowel_dir=2, edge_dir=1, left_extent=-cross_dowel_extent)
 
             for height, last_shelf, shelf in shelf_pairs:
                 print(f"    shelf_h: {height}")
@@ -364,16 +388,15 @@ class Wardrobe:
             structural shells
         :return:
         """
+        drill_vb_strip = self.drill_vb_strip
+        drill_rastex = self.drill_rastex
+        drill_pins = self.drill_pins
+        drill_rail = self.drill_rail
         if self.draft:
             drill_vb_strip = None
             drill_rastex = None
             drill_pins = None
-            drill_rail = None
-        else:
-            drill_vb_strip = self.drill_vb_strip
-            drill_rastex = self.drill_rastex
-            drill_pins = self.drill_pins
-            drill_rail = self.drill_rail
+            # drill_rail = None
 
         top_shelves = lambda fittings : (
             Shelf(1500, self.shelf_top_long, fittings),
@@ -382,20 +405,20 @@ class Wardrobe:
         )
 
         col_0_shelves = [
-            Shelf(1250, self.drawer_30_24, drill_rail),
+            Shelf(1250, self.drawer_30_24.part, drill_rail),
             *top_shelves(fittings=(drill_vb_strip, drill_rastex))
             ]
         col_1_shelves = [
-            Shelf(330, self.drawer_40_30, drill_rail),
-            Shelf(650, self.drawer_40_30, drill_rail),
-            Shelf(970, self.drawer_40_24, drill_rail),
+            Shelf(330, self.drawer_40_30.part, drill_rail),
+            Shelf(650, self.drawer_40_30.part, drill_rail),
+            Shelf(970, self.drawer_40_24.part, drill_rail),
             Shelf(1230, self.shelf_40, drill_pins),
             *top_shelves(fittings=(drill_rastex, drill_rastex))
             ]
         col_2_shelves = [
-            Shelf(330, self.drawer_40_20, drill_rail),
-            Shelf(540, self.drawer_40_20, drill_rail),
-            Shelf(750, self.drawer_40_20, drill_rail),
+            Shelf(330, self.drawer_40_20.part, drill_rail),
+            Shelf(540, self.drawer_40_20.part, drill_rail),
+            Shelf(750, self.drawer_40_20.part, drill_rail),
             Shelf(960, self.shelf_40, drill_rastex),
             Shelf(1230, self.shelf_40, drill_pins),
             Shelf(1500, self.shelf_40, drill_rastex),
@@ -406,15 +429,15 @@ class Wardrobe:
             Shelf(1770, self.shelf_middle, drill_pins),
             Shelf(2040, self.shelf_middle, drill_pins)]
         col_5_shelves = [
-            Shelf(330, self.drawer_30_30, drill_rail),
-            Shelf(645, self.drawer_30_30, drill_rail),
+            Shelf(330, self.drawer_30_30.part, drill_rail),
+            Shelf(645, self.drawer_30_30.part, drill_rail),
             Shelf(960, self.shelf_30, drill_pins),
             Shelf(1230, self.shelf_30, drill_pins),
             *top_shelves(fittings=(drill_rastex, drill_rastex))
             ]
         col_6_shelves = [
             Shelf(330, self.shelf_40, drill_pins),
-            Shelf(705, self.drawer_40_24, drill_rail),
+            Shelf(705, self.drawer_40_24.part, drill_rail),
             Shelf(960, self.shelf_40, drill_pins),
             Shelf(1230, self.shelf_40, drill_pins),
             *top_shelves(fittings=(drill_rastex, drill_rastex))
@@ -558,20 +581,80 @@ def clear_document(doc):
         doc.removeObject(obj.Name)
 
 # Ensure that FreeCAD is running with a document
-if FreeCAD.ActiveDocument is None:
-    FreeCAD.newDocument()
-else:
-    clear_document(FreeCAD.ActiveDocument)
-doc = FreeCAD.ActiveDocument  # Get the cleared (or new) document
+def get_doc():
+    if FreeCAD.ActiveDocument is None:
+        FreeCAD.newDocument()
+    else:
+        clear_document(FreeCAD.ActiveDocument)
+    doc = FreeCAD.ActiveDocument  # Get the cleared (or new) document
+    return doc
 
-w = Wardrobe(script_dir)
-w.list_operations("operations_list.txt")
-build_from_placed(doc, w.placed_objects)
+def waredrobe_model():
+    w = Wardrobe(script_dir)
+    w.list_operations("operations_list.txt")
+    doc = get_doc()
+    build_from_placed(doc, w.placed_objects)
+    doc.recompute()
+    # Ensure all objects in the document are visible
+    for obj in doc.Objects:
+        obj.Visibility = True  # Make the object visible
 
-doc.recompute()
-# Ensure all objects in the document are visible
-for obj in doc.Objects:
-    obj.Visibility = True  # Make the object visible
+    path = script_dir / "Warderobe.FCStd"
+    doc.saveAs(str(path))
 
-path = script_dir / "Warderobe.FCStd"
-doc.saveAs(str(path))
+
+
+def pin_drill_jig():
+    thickness=18
+    wall=3
+    clamps_len=30
+    lead_len = 20
+
+    dist_8 = 80
+    holes_x_8 = [20 + dist_8 * i for i in range(4)]
+    length = 40 + holes_x_8[-1]
+    dist_10 = 120
+    holes_x_10 = [length -20 - dist_10 * i for i in range(3)]
+    all_holes = np.array(holes_x_8 + holes_x_10)
+    all_holes.sort()
+    diffs = all_holes[2:] - all_holes[1:-1]
+    print("Holes 8: ", holes_x_8)
+    print("Holes 10: ", holes_x_10)
+    print("Hole diffs: ", diffs)
+    diffs = diffs[diffs != 0.0]
+    assert diffs.min() >= (10 + 8)/2 + wall
+    length=max(holes_x_8 + holes_x_10) + holes_x_8[0]
+
+    def apply_holes(part, holes, diam):
+        cyl_out = ts.make_cylinder(diam / 2 + wall, wall +  lead_len)
+        cyl_in = ts.make_cylinder(diam / 2, wall +  lead_len)
+        for x in holes:
+            shift = ts.translate([x, 0, clamps_len])
+            part = ts.fuse([part, cyl_out @ shift])
+            part = ts.cut(part, cyl_in @ shift)
+        return part
+
+    y_dim = thickness+2*wall
+    outer_box = ts.make_box([length, y_dim, clamps_len+wall]) @ ts.translate([0, -y_dim/2, 0])
+    cut_box = ts.make_box([length, thickness, clamps_len]) @ ts.translate([0, -thickness/2, 0])
+    part = ts.cut(outer_box, cut_box)
+    part = apply_holes(part, holes_x_8, 8)
+    part = apply_holes(part, holes_x_10, 10)
+
+    mark_box = ts.make_box([10, wall, clamps_len / 2])
+    part = ts.cut(part, mark_box @ ts.translate([0, thickness / 2, 0]))
+    part = ts.cut(part, mark_box @ ts.translate([length - 10, -thickness / 2 - wall, 0]))
+
+
+    doc = get_doc()
+    ts.add_object(doc, "pin_drill_jig", part)
+    doc.recompute()
+    path = script_dir / "pin_drill_jig.FCStd"
+    doc.saveAs(str(path))
+
+def main():
+    waredrobe_model()
+    # pin_drill_jig()
+
+
+main()

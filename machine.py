@@ -6,7 +6,7 @@ from functools import cached_property
 
 import FreeCAD
 import Part
-from freecad import Transform, rotate, translate, fuse, make_box, make_cylinder
+from freecad import Transform, rotate, translate, fuse, cut, make_box, make_cylinder
 
 
 def normalize(v):

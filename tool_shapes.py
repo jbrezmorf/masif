@@ -10,13 +10,15 @@ import FreeCAD
 import Part
 from machine import (DrillOp, MillOp, NoneOp, OperationList,
                      rotate, translate, Transform,
-                     make_cylinder, make_box, fuse, fvec, vec_list)
+                     make_cylinder, make_box, fuse, cut, fvec, vec_list)
 
 #Vector = np.ndarray
 
-def add_object(doc, name, shape, translate, rotate = None):
+def add_object(doc, name, shape, translate = None, rotate = None):
     obj = doc.addObject("Part::Feature", name)
     obj.Shape = shape
+    if  translate is None:
+        translate = [0, 0, 0]
     if rotate is None:
         rotate = FreeCAD.Rotation()
     assert len(translate) == 3
@@ -34,33 +36,33 @@ def aabb(bb:FreeCAD.BoundBox):
 
 
 
-def drill(feature: Part.Feature, tool:'Shape', position:Union[FreeCAD.Placement, List[float]] = None, rotation=None):
-    # Create a copy of the tool and apply possition then cut it from part in actual placement.
-    #
-    # Set the position and rotation of the tool
-    print("    drill(...", end=None)
-    if position is None:
-        position = [0, 0, 0]
-    if isinstance(position, FreeCAD.Placement):
-        tool_placement = position
-    else:
-        if rotation is None:
-            rotation = FreeCAD.Rotation()  # No rotation by default
-        assert len(position) == 3
-        tool_placement = FreeCAD.Placement(FreeCAD.Vector(position), rotation)
-    tool_shape = tool.copy().transformGeometry(tool_placement.toMatrix())
-    f_placement = feature.Placement
-    part_shape = feature.Shape.copy().transformGeometry(f_placement.toMatrix())
-    part_shape.Placement = FreeCAD.Placement()
-    # Perform the cut operation
-    result_shape = part_shape.cut(tool_shape)
-    inverse_placement = f_placement.inverse()
-    inv_mat = inverse_placement.toMatrix()
-    res_shape_back = result_shape.transformGeometry(inv_mat)
-    feature.Shape = res_shape_back
-    feature.Placement = f_placement
-    print(")")
-    return feature
+# def drill(feature: Part.Feature, tool:'Shape', position:Union[FreeCAD.Placement, List[float]] = None, rotation=None):
+#     # Create a copy of the tool and apply possition then cut it from part in actual placement.
+#     #
+#     # Set the position and rotation of the tool
+#     print("    drill(...", end=None)
+#     if position is None:
+#         position = [0, 0, 0]
+#     if isinstance(position, FreeCAD.Placement):
+#         tool_placement = position
+#     else:
+#         if rotation is None:
+#             rotation = FreeCAD.Rotation()  # No rotation by default
+#         assert len(position) == 3
+#         tool_placement = FreeCAD.Placement(FreeCAD.Vector(position), rotation)
+#     tool_shape = tool.copy().transformGeometry(tool_placement.toMatrix())
+#     f_placement = feature.Placement
+#     part_shape = feature.Shape.copy().transformGeometry(f_placement.toMatrix())
+#     part_shape.Placement = FreeCAD.Placement()
+#     # Perform the cut operation
+#     result_shape = part_shape.cut(tool_shape)
+#     inverse_placement = f_placement.inverse()
+#     inv_mat = inverse_placement.toMatrix()
+#     res_shape_back = result_shape.transformGeometry(inv_mat)
+#     feature.Shape = res_shape_back
+#     feature.Placement = f_placement
+#     print(")")
+#     return feature
 
 
 def pin():
@@ -122,7 +124,7 @@ def pin_edge(shelf_width):
               OperationList(*pins(shelf_pin))
     )
 
-def dowel(left_extent=0, dowel_vec=None):
+def dowel(left_extent=0, dowel_vec=None, diam=8, length=35):
     """
     Dowel extends left to be drilled to the pannel.
     left_extent :
@@ -132,39 +134,37 @@ def dowel(left_extent=0, dowel_vec=None):
     :param thickness:
     :return:
     """
-    diam = 6
-    l = 35
     if left_extent == 0:
-        right_extent = left_extent = l / 2
+        right_extent = left_extent = length / 2
     elif left_extent > 0:
-        right_extent = l - left_extent
+        right_extent = length - left_extent
     elif left_extent < 0:
         right_extent = abs(left_extent)
-        left_extent = l - right_extent
+        left_extent = length - right_extent
     else:
         raise ValueError("Non-real dowel extent.")
     if dowel_vec is None:
         dowel_vec = [1, 0, 0]
-    drill_left = DrillOp(diam / 2, left_extent + 0.5, direction=-np.array(dowel_vec))
-    drill_right = DrillOp(diam / 2, right_extent + 0.5, direction=dowel_vec)
+    drill_left = DrillOp(diam / 2, left_extent + 1, direction=-np.array(dowel_vec))
+    drill_right = DrillOp(diam / 2, right_extent + 1, direction=dowel_vec)
     dowel_pair = OperationList(drill_left, drill_right)
     return dowel_pair
 
-def dowel_row(a, b, n, dowel_vec, edge_vec, left_extent=0):
+def dowel_row(y_pos_vec, dowel_vec, edge_vec, left_extent=0, dowel_fn=dowel):
     """
     Produce two drill operations one to the X<0 half space,
     one for the X>0 half space.
-    :param a:
-    :param b:
-    :param n:
-    :param dowel_vec:
-    :param edge_vec:
-    :param left_extent:
-    :return:
+    :param edge_0: start position in edge_vec direction
+    :param edge_dist: dowel distance in edge_vec direction
+    :param n: number of dowels to place
+    :param dowel_vec: direction of the dowel axis [0, 1, 2]
+    :param edge_vec: direction of the connected edge axis [0, 1, 2] != dowel_vec
+    :param left_extent: extension of the dowels to the left (>0) or to the right (<0), or centered dowels for (=0)
+    :return: Dowel drilling operations OpList[ DrillPair, ..]
     """
-    dowel_pair = dowel(left_extent, dowel_vec=dowel_vec)
-    y_pos_vec = [y * np.array(edge_vec) for y in np.linspace(a, b, n)]
-    row = OperationList(*[dowel_pair @ translate(yy) for yy in y_pos_vec])
+    edge_vec = np.array(edge_vec)
+    dowel_pair = dowel_fn(left_extent, dowel_vec=dowel_vec)
+    row = OperationList(*[dowel_pair @ translate(yy * edge_vec) for yy in y_pos_vec])
     return row
 
 
@@ -184,11 +184,11 @@ def rastex(shelf_thickness, through:bool=False):
     :param through:
     :return:
     """
-    hetix_diam = 15.5
-    hetix_l = 13.5
+    hetix_diam = 15.5  # 15 exact
+    hetix_l = 13.5     # 13 exact
     # hetix_x = 34
     if through:
-        pin_in_diam = 8.5
+        pin_in_diam = 8.5   # 8 exact
         pin_in_l = shelf_thickness
         hetix_x = 24.5  # assume shorter double ended dowel and 0.5 correction for 18mm pannel
         # asume usage without side spring
@@ -263,11 +263,11 @@ def vb(shelf_thickness, through=False):
 
 
 
-def strong_edge(thickness, shelf_width, tool, through:bool=False):
+def strong_edge(thickness, shelf_width, tool, through:bool=False, dowel_fn=dowel):
     thickness = 18
     dowel_to_pannel = 14
     rastex_pair = tool(thickness, through)
-    dowel_pair = dowel(left_extent=dowel_to_pannel) @ translate([0, 0, thickness/2.0])
+    dowel_pair = dowel_fn(left_extent=dowel_to_pannel) @ translate([0, 0, thickness/2.0])
     dist_from_front = 40
     y_shift = shelf_width / 2 - dist_from_front  # 260
     parts = [rastex_pair, dowel_pair, dowel_pair, dowel_pair, rastex_pair]
@@ -286,68 +286,89 @@ def side_symmetric(shape: DrillOp):
     l_side = shape @ (rotate([0, 0, 1], 180))
     return (l_side, r_side)
 
-def rail():
-    """
-    In order to support rails at both sides of the pannel
-    at same height we have distinct drill patterns for the left and the right
-    side of the pannel. The two side drilling function has to support
-    tools as pairs and decide for the left or right according to the side.
-    :return:
 
-    Pojez 1-2mm dovnitř, dopředu více, celkem cca 4
-    """
-    # holes relative to rail front and axis
-    z_shift = 47    # axis of rail from bottom face of the box
-    x_depth = 12
-    shelf_width = 600
-    y_shift = 2     # rails 2mm from the front
+@attrs.define
+class Rail:
+    height: float
+    thickness: float
 
-    holes_l = [
-        (6, 35, 0),
-        (7, 114.5, 0),
-        (4, 259, 0),
-        (4, 538, -9)    # +/-9 hole
-    ]
+    def predrill(self, screw_diam, shelf_width):
+            """
+            In order to support rails at both sides of the pannel
+            at same height we have distinct drill patterns for the left and the right
+            side of the pannel. The two side drilling function has to support
+            tools as pairs and decide for the left or right according to the side.
+            :return:
 
-    holes_r = [
-        (7, 50, 0),
-        (6, 99.5, 0),
-        (4, 323, 0),
-        (4, 538, 9)  # +/-9 hole
-    ]
+            Pojez 1-2mm dovnitř, dopředu více, celkem cca 4
+            """
+            # holes relative to rail front and axis
+            drill_depth = 12
+            y_shift = 2  # rails 2mm from the front
+            # total mill height = 44mm
+            mill_depth = 1.0  # reserve horizontal space on a single side of rail, recommended 1mm
+            rail_height = self.height
+            screw_diam = 3
 
-    def side_fn(x_dir, holes):
-        ops = [DrillOp((d - 2.5) / 2.0, x_depth, direction=[x_dir, 0, 0])
-                   @ translate([0, y, z + z_shift])
-                    for d, y, z in holes]
-        # total mill height = 44mm
-        rail_height = 44
-        ops.append(MillOp(rail_height / 2.0, 1.0, direction=[x_dir, 0, 0],
-                          start=[0, 0, z_shift], end=[0, shelf_width, z_shift]))
-        pannel_ops = OperationList(*ops)
-        shelf_op = NoneOp()
+            # left face of pannel
+            # hole tuple: (drill depth, Y pos (from front), vertical pos from rail axis, rail_diam)
+            holes_l = [
+                (drill_depth, 35, 0, 6),  #
+                (drill_depth, 114.5, 0, 7),
+                (0.5, 259, 0, 4),  # ??
+                (0.5, 538, -9, 4.5)  # +/-9 hole
+            ]
 
-        # drill composed operations are relative to shlef_width center
-        return OperationList(pannel_ops, shelf_op) @ translate([0,  - shelf_width/2 + y_shift, 0])
+            # right place of pannel
+            holes_r = [
+                (drill_depth, 50, 0, 7),
+                (drill_depth, 99.5, 0, 6),
+                (0.5, 323, 0, 4),   # ??
+                (0.5, 538, 9, 4.5)  # +/-9 hole
+            ]
 
-    side_ops = OperationList(
-        side_fn(x_dir=+1.0, holes=holes_l),
-        side_fn(x_dir=-1.0, holes=holes_r)
-    )
-    return side_ops
+            def side_fn(x_dir, holes):
+                ops = [DrillOp(screw_diam / 2.0, depth, direction=[x_dir, 0, 0])
+                       @ translate([0, y, z])
+                       for depth, y, z, _ in holes]
+                ops.append(MillOp(rail_height / 2.0, mill_depth, direction=[x_dir, 0, 0],
+                                  start=[0, 0, 0], end=[0, shelf_width, 0]))
+                pannel_ops = OperationList(*ops)
+                shelf_op = NoneOp()
+
+                # drill composed operations are relative to shlef_width center
+                return OperationList(pannel_ops, shelf_op) @ translate([0, - shelf_width / 2 + y_shift, 0])
+
+            side_ops = OperationList(
+                side_fn(x_dir=+1.0, holes=holes_l),
+                side_fn(x_dir=-1.0, holes=holes_r)
+            )
+            return side_ops
 
 
-def drawer(width, height, depth):
-    rail_thickness = 25 / 2
-    rail_height = 45
-    z_shift = 47 - rail_height / 2
-    components = [
-        Part.makeBox(rail_thickness, depth, rail_height) @ translate([0, 0, z_shift]),
-        Part.makeBox(width, depth, height) @ translate([rail_thickness, 0, 0]),
-        Part.makeBox(rail_thickness, depth, rail_height) @ translate([rail_thickness + width, 0, z_shift])
-        ]
-    return fuse(components)
+@attrs.define
+class Drawer:
+    part: 'WPart'
+    dims: List[float]
+    rail_z: float
+    rail: Rail
 
+    @classmethod
+    def make(cls, dimensions, n_parts, rail_z, rail):
+        dx, dy, dz = dimensions
+        components = [
+            Part.makeBox(rail.thickness, dy, rail.height) @ translate([0, 0, rail_z]),
+            Part.makeBox(dx, dy, dz) @ translate([rail.thickness, 0, 0]),
+            Part.makeBox(rail.thickness, dy, rail.height) @ translate([rail.thickness + dx, 0, rail_z])
+            ]
+        shape = fuse(components)
+        name = f"drawer_{dx}_{dy}"
+        part = WPart(shape, n_parts, name)
+        return cls(part, dimensions, rail_z, rail)
+
+    def rail_drill(self, screw_diam):
+        width = self.dims[1]
+        return self.rail.predrill(screw_diam, width) @ translate([0, 0, self.rail_z + self.rail.height / 2.0])
 
 @attrs.define
 class PlankPart:
@@ -493,8 +514,63 @@ def interval_intersect(bb_a, bb_b, rel_range = None):
     return (1 - rel_a) * a + rel_a * b, (1 - rel_b) * a + rel_b * b
 
 
+from functools import cached_property
+from itertools import product, accumulate
+from bisect import bisect_right
+
+
+@attrs.define
+class CombinationFinder:
+    spacing: List[float]
+    max_len: float
+
+    @cached_property
+    def sum_combos(self) -> List[Tuple[float, List[int]]]:
+        """
+        Lazily computes all unique sums of combinations from V with repetitions,
+        up to the maximum length L_max. The combinations are represented by counts
+        of each index in V. For the same 'total_length', stores the combination
+        with the minimal number of items.
+        """
+        # Generate all possible counts within the max repetitions
+        space_vec = np.array(self.spacing)
+        ranges = [range(int(self.max_len // dist) + 1) for dist in self.spacing]
+        sum_to_combo = {}
+        max_num_items = float('inf')
+        for counts in product(*ranges):
+            total_length = np.dot(space_vec, counts)
+            num_items = sum(counts)
+            update = num_items, counts
+            actual = sum_to_combo.setdefault(total_length, (max_num_items, []))
+            sum_to_combo[total_length] = min(actual, update)
+        sums_list = sorted([(tlen, counts) for tlen, (count, counts) in sum_to_combo.items()])
+        return sums_list
+
+    def get(self, L: float) -> Tuple[float, List[int]]:
+        """
+        Finds the combination with the largest sum less than or equal to L.
+
+        :param L: The target length.
+        :return: A tuple containing the sum and the counts of indices in V, or None if no such sum exists.
+        """
+        sums = self.sum_combos
+        idx = bisect_right(sums, L, key = lambda item: item[0])
+        # idx is first sum > L
+        if idx < 2:
+            # idx == 0 => not found
+            # idx == 1 => found only item 0 with % total_length
+            return 0, []  # No sum less than or equal to L
+        else:
+            closest_sum, counts = sums[idx - 1]
+            return closest_sum, counts
+
+
+dowel_plan = CombinationFinder([40, 80,  120], 2000)
+
+
 def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir,
-                  other_pos=None, rel_range=(None, None, None), left_extent = 0):
+                  other_pos=None, rel_range=(None, None, None), left_extent = 0,
+                  dowel_row_fn=dowel_row, dowel_dist=100):
     """
     Place row of connecting dowels for two rectangular, axes aligned parts.
     The connecting surface is automatically detected from 'dowel_dir',
@@ -518,32 +594,36 @@ def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir,
     connect_plane_b = bb_b[i_min, dowel_dir]
     assert connect_plane_a == connect_plane_b, f"{connect_plane_a} != {connect_plane_b}"
     edge_min, edge_max = interval_intersect(bb_a[:, edge_dir], bb_b[:, edge_dir], rel_range[edge_dir])
-    edge_min, edge_max = edge_min + 20, edge_max -20
-    if edge_max < edge_min:
-        return part_a, part_b
-    dowel_dist = 80
-    n_dowels = int((edge_max - edge_min) / dowel_dist)
-    if n_dowels < 3:
-        # 2 dowels case
-        edge_min -= 10
-        edge_max += 10
-        # compute remaining dist
-        dowel_dist = edge_max - edge_min
-        if edge_max - edge_min < 1.0:
-            return part_a, part_b
-        if dowel_dist > 20:
-            n_dowels = 2
-        elif dowel_dist > 0:
-            n_dowels = 1
-        else:
-            # n_dowels == 0
-            return part_a, part_b
+    edge_min, edge_max = edge_min + 15, edge_max - 15
 
+    dowel_positions = []
+    row_len = edge_max - edge_min
+    total_len, spacing_counts = dowel_plan.get(row_len)
+    if total_len == 0:
+        # less then min spacing
+        # 2 dowels case
+        # compute remaining dist
+        if row_len > 20:
+            # total edge len > 50
+            dowel_positions = [0, row_len]
+        elif row_len > 0:
+            dowel_positions = [0]
+    else:
+        dowel_positions = [0]
+        for count, space in zip(spacing_counts, dowel_plan.spacing):
+            dowel_positions.extend( count * [space])
+        dowel_positions = list(accumulate(dowel_positions))
+    if len(dowel_positions) == 0:
+        return part_a, part_b
+    # center n dowels between edge_min edge_max
+    assert dowel_positions[-1] <= row_len
+    reminder = row_len - dowel_positions[-1]
+    dowel_row_pos = [edge_min + reminder / 2.0 + pos for pos in dowel_positions]
     dowel_vec = [0, 0, 0]
     dowel_vec[dowel_dir] = 1.0
     edge_vec = [0, 0, 0]
     edge_vec[edge_dir] = 1.0
-    dowel_ops = dowel_row(edge_min, edge_max, n_dowels, dowel_vec, edge_vec, left_extent=left_extent)
+    dowel_ops = dowel_row_fn(dowel_row_pos, dowel_vec, edge_vec, left_extent=left_extent)
     for d in dowel_ops:
         dowel_left, dowel_right = d
         position = [0, 0, 0]

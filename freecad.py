@@ -27,6 +27,9 @@ def fuse(shapes):
         result = result.fuse(s)
     return result
 
+def cut(shape, tool):
+    return shape.cut(tool)
+
 
 def make_cylinder(radius, length, axis=None, origin=None):
     """

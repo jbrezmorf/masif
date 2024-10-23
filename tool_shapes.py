@@ -8,8 +8,8 @@ import freecad
 
 import FreeCAD
 import Part
-from machine import (DrillOp, MillOp, NoneOp, OperationList,
-                     rotate, translate, Transform,
+from machine import (ShapeOp, DrillOp, MillOp, NoneOp, OperationList,
+                     mirror, rotate, translate, Transform, create_arc,
                      make_cylinder, make_box, fuse, cut, fvec, vec_list)
 
 #Vector = np.ndarray
@@ -71,12 +71,15 @@ def pin():
     pin_in_l = 7.0
     pin_out_diam = 7 + 0.5
     pin_out_l = 10 + 0.5
-    pin_z = pin_out_diam / 2
+    pin_z = 0.0
     # shelf drill extension
-    box_dims = (pin_out_l, pin_out_diam, pin_out_diam/2)
-    box = Part.makeBox(*box_dims, FreeCAD.Vector(0, -box_dims[1] / 2, ))
-    shelf_op = MillOp(pin_out_diam/2.0, pin_out_l,
-           direction=[1, 0, 0], start=[0, 0, -pin_z], end=[0, 0, +pin_z])
+    #box_dims = (pin_out_l, pin_out_diam, pin_out_diam/2)
+    #box = Part.makeBox(*box_dims, FreeCAD.Vector(0, -box_dims[1] / 2, ))
+    #shelf_op = MillOp(pin_out_diam/2.0, pin_out_l,
+    #       direction=[1, 0, 0], start=[0, 0, -pin_z], end=[0, 0, +pin_z])
+    shelf_op = MillOp.ball(pin_out_diam / 2.0, pin_out_diam,
+           direction=[0, 0, 1], start=[0, 0, 0], end=[pin_out_l, 0, 0])
+
 
     # pannel drill
     pannel_op = DrillOp(pin_in_diam/2, pin_in_l,
@@ -184,21 +187,27 @@ def rastex(shelf_thickness, through:bool=False):
     :param through:
     :return:
     """
-    hetix_diam = 15.5  # 15 exact
-    hetix_l = 13.5     # 13 exact
+
+    # Rastex 15 for 18mm panels
+    hetix_diam = 15  # 15 exact
+    hetix_l = 13.4     # 13 exact
     # hetix_x = 34
     if through:
-        pin_in_diam = 8.5   # 8 exact
+        # Dvojitý kolík DU 880 (59mm) / DU853 (79mm)
+        # varianta 59mm, středová rozteč rastex vrtání má být 2*24 + 19 = 67mm
+        pin_in_diam = 8   # 8 exact
         pin_in_l = shelf_thickness
         hetix_x = 24.5  # assume shorter double ended dowel and 0.5 correction for 18mm pannel
         # asume usage without side spring
     else:
+        # kolík Twister DU 644 T (střed rastex vrtání 34mm od panelu)
+        hetix_x = 34
         # M6 fitting
         pin_in_diam = 8
         pin_in_l = 11.5
-        hetix_x = 34
+
     # shlef connection
-    pin_out_diam = 8.5
+    pin_out_diam = 8
     pin_out_l = hetix_x
 
     # center of fitting should be at the center of the shelf
@@ -232,6 +241,7 @@ def vb(shelf_thickness, through=False):
     :param through:
     :return:
     """
+    # VB 36M, for 16mm shelves
     vb_diam_large = 20
     vb_l_large = 12.5
     vb_large_x = 10
@@ -240,6 +250,7 @@ def vb(shelf_thickness, through=False):
     vb_small_x = 32 + vb_large_x
 
     # M6 fitting
+    # Dowel DU 648
     pin_in_diam = 8
     pin_in_l = 11.5
     # center of fitting should be at the center of the shelf
@@ -263,11 +274,9 @@ def vb(shelf_thickness, through=False):
 
 
 
-def strong_edge(thickness, shelf_width, tool, through:bool=False, dowel_fn=dowel):
-    thickness = 18
-    dowel_to_pannel = 14
+def strong_edge(thickness, shelf_width, tool, dowel_extent, through:bool=False, dowel_fn=dowel):
     rastex_pair = tool(thickness, through)
-    dowel_pair = dowel_fn(left_extent=dowel_to_pannel) @ translate([0, 0, thickness/2.0])
+    dowel_pair = dowel_fn(left_extent=dowel_extent) @ translate([0, 0, thickness/2.0])
     dist_from_front = 40
     y_shift = shelf_width / 2 - dist_from_front  # 260
     parts = [rastex_pair, dowel_pair, dowel_pair, dowel_pair, rastex_pair]
@@ -314,22 +323,22 @@ class Rail:
             # hole tuple: (drill depth, Y pos (from front), vertical pos from rail axis, rail_diam)
             holes_l = [
                 (drill_depth, 35, 0, 6),  #
-                (drill_depth, 114.5, 0, 7),
-                (0.5, 259, 0, 4),  # ??
-                (0.5, 538, -9, 4.5)  # +/-9 hole
+                (drill_depth, 114, 0, 7),
+                (2, 259, 0, 4),  # ??
+                (2, 538, -9, 4.5)  # +/-9 hole
             ]
 
             # right place of pannel
             holes_r = [
                 (drill_depth, 50, 0, 7),
-                (drill_depth, 99.5, 0, 6),
-                (0.5, 323, 0, 4),   # ??
-                (0.5, 538, 9, 4.5)  # +/-9 hole
+                (drill_depth, 99, 0, 6),
+                (2, 323, 0, 4),   # ??
+                (2, 538, 9, 4.5)  # +/-9 hole
             ]
 
             def side_fn(x_dir, holes):
                 ops = [DrillOp(screw_diam / 2.0, depth, direction=[x_dir, 0, 0])
-                       @ translate([0, y, z])
+                       @ translate([0, y, z])   # shift 2mm inside
                        for depth, y, z, _ in holes]
                 ops.append(MillOp(rail_height / 2.0, mill_depth, direction=[x_dir, 0, 0],
                                   start=[0, 0, 0], end=[0, shelf_width, 0]))
@@ -377,12 +386,6 @@ class PlankPart:
     rot : FreeCAD.Rotation   # rotation object
     thick : float
 
-    def shape(self):
-        shape = Part.makeBox(self.length, self.width, self.thick)
-        rot_mat = FreeCAD.Placement(FreeCAD.Vector(0,0,0), self.rot).toMatrix()
-        shape = shape.transformGeometry(rot_mat)
-        bb = shape.BoundBox
-        return shape @ translate([-bb.XMin, -bb.YMin, -bb.ZMin])
 
 
 
@@ -392,6 +395,7 @@ class WPart:
     shape: Part.Shape
     n_parts: int
     name: str
+    placement: FreeCAD.Placement = Transform()
     dimensions: PlankPart = None
     _i_part: int = 0
 
@@ -416,8 +420,22 @@ class WPart:
                 rot_total = rot.multiply(rot_total)
                # print(rot_ax, rot, rot_total)
         plank = PlankPart(length, width, rot_total, thick)
-        part_shape = plank.shape()
-        return cls(part_shape, n_parts, name, dimensions=plank)
+        part_shape, placement = cls.make_shape(plank)
+        return cls(part_shape, n_parts, name, placement = placement, dimensions=plank)
+
+    @classmethod
+    def make_shape(cls, plank: PlankPart, rot=None):
+        shape = Part.makeBox(plank.length, plank.width, plank.thick)
+        if rot is None:
+            rot = plank.rot
+        rot_mat = FreeCAD.Placement(FreeCAD.Vector(0, 0, 0), rot).toMatrix()
+        shape_bb = shape.transformGeometry(rot_mat)
+        bb = shape_bb.BoundBox
+        return shape, Transform(rot) @ translate([-bb.XMin, -bb.YMin, -bb.ZMin])
+
+    def copy(self, rot : Transform):
+        rot_shape, placement = self.make_shape(self.dimensions, rot = rot.rotation().placement.Rotation)
+        return WPart(rot_shape, 1, self.name + "_copy", placement=placement, dimensions=self.dimensions)
 
 
     def allocate(self):
@@ -450,14 +468,28 @@ class PlacedPart:
 
     @cached_property
     def placement(self) -> Transform:
+        """
+        Return transform of the shape from the original flat box through:
+        rotation of shape, transplation of min corner to origin, translation to final position
+        :return:
+        """
         pos = fvec(self.position)
         new_placement = FreeCAD.Placement(pos, FreeCAD.Rotation())
-        return Transform(new_placement * self.part.shape.Placement)
+        return Transform(new_placement * self.part.placement.placement)
 
     @cached_property
     def aabb(self):
         final_shape = self.part.shape @ self.placement
         return aabb(final_shape.BoundBox)
+
+    @cached_property
+    def dims(self):
+        min_, max_ = self.aabb
+        return max_ - min_
+
+    def copy(self, rot, translate):
+        rot_part = self.part.copy(rot)
+        return PlacedPart(rot_part, translate, machine_ops=self.machine_ops)
 
     def max(self, ax):
         return self.aabb[1][ax]
@@ -493,8 +525,11 @@ class PlacedPart:
             placed_cut = tool.copy() @ self.placement
             cuts.append(placed_cut)
             # Subtract the cylinder from the original shape to simulate drilling
-            shape = shape.cut(tool)
-
+            try:
+                shape = shape.cut(tool)
+            except Part.OCCError as e:
+                print(shape)
+                print(tool)
         return shape, cuts
 
 
@@ -689,15 +724,184 @@ def top_wheel(thickness: float) -> OperationList:
     return OperationList(*ops)
 
 
-def drill_wheels(front_pannel:PlacedPart):
+def drill_wheels(pannel_aabb):
+    # Constructed for right front pannel.
     bolt_dist = 64
-    x_edge_dist = bolt_dist / 2.0 + 50
-    min_aabb, max_aabb = front_pannel.aabb
+    x_edge_dist_in = bolt_dist / 2.0 + 45
+    x_edge_dist_out = bolt_dist / 2.0 + 70
+    min_aabb, max_aabb = pannel_aabb
     thickness = max_aabb[1] - min_aabb[1]
     z_pos = max_aabb[2]
     y_pos = (min_aabb[1] + max_aabb[1]) / 2.0
     wheel = top_wheel(thickness)
-    front_pannel.apply_op(OperationList(
-        wheel @ translate([min_aabb[0] + x_edge_dist, y_pos, z_pos]),
-        wheel @ translate([max_aabb[0] - x_edge_dist, y_pos, z_pos]),
-    ))
+    op = OperationList(
+        wheel @ translate([min_aabb[0] + x_edge_dist_in, y_pos, z_pos]),
+        wheel @ translate([max_aabb[0] - x_edge_dist_out, y_pos, z_pos]),
+    )
+    return op
+
+
+
+def ramp_mill(part: PlacedPart, width):
+    min_, max_ = part.aabb
+    dx, dy, dz = max_ - min_
+    direction = np.array([0, dz, -width])
+    ramp_vec = np.array([width, dz])
+    mill_diam = np.linalg.norm(direction)
+    mill_depth = 2 * dz
+    pos_yz = [width / 2 +  10, dz / 2] - mill_depth * direction[1:] / mill_diam - 0.5 * ramp_vec
+    op = MillOp(mill_diam, mill_depth, direction, start=[0, *pos_yz], end=[dx, *pos_yz])
+    part.apply_op(op @ part.placement)
+    return part
+
+
+def handle_mill_op(width, height, depth):
+    op = MillOp(width / 2.0, depth / 2.0, [0, 1, 0],
+                start=[0, 0, -height/2.0], end=[0, 0, height/2.0], r_fillet=2) @ rotate([0, 0, 1], 180)
+    op = op @ translate([0, depth/2.0, 0])
+    return op
+
+
+
+
+def handle_path(A, B, L, R, H):
+    """
+    Creates the wire representing the path of the mill operation.
+
+    Parameters:
+    A (Vector): Starting point.
+    B (Vector): Ending point.
+    L (float): Parametric length for path division.
+    R (float): Radius for circular transitions.
+    H (float): Vertical length to move downwards.
+
+    Returns:
+    Part.Wire: The wire representing the path.
+    """
+    # Compute the unit vector from A to B
+    A = fvec(A)
+    B = fvec(B)
+    D_vec = B.sub(A)
+    L_AB = D_vec.Length
+    D = D_vec.normalize()
+
+    # Compute parametric points along AB
+    t1 = 0.5 - L
+    t2 = 0.5 + L
+    P1 = A
+    P2 = A + D * (L_AB * t1)
+    P10 = B
+    P9 = A + D * (L_AB * t2)
+
+    edges = []
+
+    # Edge from P1 to P2
+    edge1 = Part.LineSegment(P1, P2).toShape()
+    edges.append(edge1)
+
+    # First arc from P2 to P3
+    # Start tangent vector T1 (along AB)
+    T1 = D
+    # End tangent vector T2 (downwards)
+    T2 = FreeCAD.Vector(0, -1, 0)
+
+    arc1, P3 = create_arc(R, P2, T1, T2)
+    edges.append(arc1)
+    arc_last, P8 = create_arc(R, P9, -T1, T2)
+
+    # Line downwards from P3 to P4
+    if H > 0:
+        P4 = P3.add(FreeCAD.Vector(0, -H, 0))
+        edge2 = Part.LineSegment(P3, P4).toShape()
+        edges.append(edge2)
+    else:
+        P4 = P3
+
+    # Second arc from P4 to P5
+    # Start tangent vector T3 (downwards)
+    T3 = FreeCAD.Vector(0, -1, 0)
+    # End tangent vector T4 (horizontal right)
+    T4 = FreeCAD.Vector(1, 0, 0)
+
+    arc2, P5 = create_arc(R, P4, T3, T4)
+    edges.append(arc2)
+
+    # Horizontal line from P5 to P6
+    # Compute horizontal length
+    total_horizontal_length = P8.x - P3.x -2 * R
+    assert total_horizontal_length > 10, f"Too small handle_width={total_horizontal_length}"
+    P6 = P5.add(FreeCAD.Vector(total_horizontal_length, 0, 0))
+    edge3 = Part.LineSegment(P5, P6).toShape()
+    edges.append(edge3)
+
+    # Third arc from P6 to P7
+    # Start tangent vector T5 (horizontal right)
+    T5 = FreeCAD.Vector(1, 0, 0)
+    # End tangent vector T6 (upwards)
+    T6 = FreeCAD.Vector(0, 1, 0)
+
+    arc3, P7 = create_arc(R, P6, T5, T6)
+    edges.append(arc3)
+
+    edge4 = Part.LineSegment(P7, P8).toShape()
+    edges.append(edge4)
+    edges.append(arc_last)  #P8, P9
+
+
+    # Edge from P8 to B (should be minimal or zero if P8 == B)
+    # For completeness, we can add this edge
+    edge5 = Part.LineSegment(P9, P10).toShape()
+    edges.append(edge5)
+
+    # Create wire from edges
+    path_wire = Part.Wire(edges)
+    return path_wire
+
+
+
+
+def create_sweep_shape(path_wire, W_rect=10, H_rect=20):
+    """
+    Creates the sweep shape by moving a rectangular cross-section along the path.
+
+    Parameters:
+    path_wire (Part.Wire): The wire representing the path.
+    W_rect (float): Width of the rectangular cross-section.
+    H_rect (float): Height of the rectangular cross-section.
+
+    Returns:
+    Part.Shape: The swept shape.
+    """
+    # Get the start point and tangent of the path
+    X0 = path_wire.Vertexes[0].Point
+    tangent = path_wire.Vertexes[1].Point.sub(X0)
+
+    # Create a coordinate system with the Z-axis as the profile's height direction
+    # The profile plane normal is the tangent of the path at the start point
+    # Create the rotation to align the profile plane with the path's normal plane
+    profile_normal = tangent.normalize()
+    profile_y = FreeCAD.Vector(0, 0, 1)  # Desired up direction for the profile (height in Z)
+    profile_x = profile_normal.cross(profile_y).normalize()
+
+    # Compute the rectangle vertices directly in global coordinates
+    dx = W_rect
+    dy = H_rect
+
+    vertices = [X0,
+                X0 + profile_x * dx,
+                X0 + profile_x * dx + profile_y * dy,
+                X0 + profile_y * dy]
+    vertices = [*vertices, vertices[0]]
+    # Create the rectangle wire
+    rect_wire = Part.makePolygon([FreeCAD.Vector(v) for v in vertices])
+
+    # Sweep the rectangle along the path using makePipeShell
+    makeSolid = True
+    isFrenet = False
+    sweep = path_wire.makePipeShell([rect_wire, rect_wire], makeSolid, isFrenet)
+
+    # Convert to a solid if it's not already
+    #if not sweep.isSolid():
+    #    sweep = Part.Solid(sweep)
+
+    return sweep

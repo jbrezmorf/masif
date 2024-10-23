@@ -27,6 +27,7 @@ import freecad
 
 # Get the directory of the current script
 script_dir = Path(__file__).parent
+model_dir = script_dir / "model"
 import os
 
 # Adjust the path according to where FreeCAD is installed
@@ -104,8 +105,11 @@ class Wardrobe:
         self.thickness = 18
         self.shelf_width = 600
         self.draft = True
+        self.door_open = True
+
         self.dowel_diam = 8
         self.dowel_len = 35
+        self.cross_dowel_extent = 12
         self.common_dowel_dist = 100
         self.rail_pannel_predrill = 3   # screw diam 3mm / 5mm
         self.rail_height = 44
@@ -116,8 +120,10 @@ class Wardrobe:
         # Replace 'your_file.ods' with the path to your ODS file
         df = pd.read_excel(workdir / 'Objednávka MAPH.ods', engine='odf', header=None)
 
+
         self.dowel = lambda *a, **b : ts.dowel(*a, **b, diam=self.dowel_diam, length=self.dowel_len)
-        self.strong_edge = lambda *a, **b : ts.strong_edge(*a, **b, dowel_fn=self.dowel)
+        self.strong_edge = lambda *a, **b : ts.strong_edge(*a, **b,
+                                                           dowel_extent=self.cross_dowel_extent, dowel_fn=self.dowel)
         self.dowel_row = lambda *a, **b : ts.dowel_row(*a, **b, dowel_fn=self.dowel)
         self.dowel_connect = lambda *a, **b: ts.dowel_connect(*a, **b,
                              dowel_row_fn=self.dowel_row, dowel_dist=self.common_dowel_dist)
@@ -127,6 +133,7 @@ class Wardrobe:
         df = df[valid]
         n_parts = df.iloc[:, 0]
         identifier = df.iloc[:, ord('I') - ord('A')]
+        print(identifier)
         suffix = df.iloc[:, ord('J') - ord('A')]
         length = df.iloc[:, ord('B') - ord('A')]
         width = df.iloc[:, ord('C') - ord('A')]
@@ -229,38 +236,43 @@ class Wardrobe:
 
         :return: composed wardrobe body object of the parst
         """
-        cross_dowel_extent = 14
+        bot_y_shift = 0
         print("Create columns")
 
         # bottom front
-        y_shift = self.vertical_panel.dimensions.width - self.bottom.dimensions.length - self.bottom_front_L.dimensions.width
+        y_shift = (self.vertical_panel.dimensions.width - self.bottom.dimensions.length
+                   - self.bottom_front_L.dimensions.width + bot_y_shift)
         print("bottom_front y shift ")
         bot_front_l = self.add_object(self.bottom_front_L, [0, y_shift, 0])
         bot_front_r = self.add_object(self.bottom_front_R, [bot_front_l.part.dimensions.length, y_shift, 0] )
         # in colision with perpendicular bottom part, well conected by that
         bot_front_l, bot_front_r =  self.dowel_connect(bot_front_l, bot_front_r, dowel_dir=0, edge_dir=1,
-                                                    rel_range=[None, (0, 0.7), None])
+                                                    rel_range=[None, (0.3, 1.0), None])
+
+        # bottom_front_width = 130, 60 under pannel, 70 outer
+        ts.ramp_mill(bot_front_l, width=30)
+        ts.ramp_mill(bot_front_r, width=30)
 
         # ceiling
-        y_shift = -100
-        z_shift = self.vertical_panel.dimensions.length + self.thickness
-        ceil_a = self.add_object(self.ceil_A, [0, y_shift, z_shift])
-        ceil_b = self.add_object(self.ceil_B, [ceil_a.part.dimensions.length, y_shift, z_shift])
-        ceil_c = self.add_object(self.ceil_C, [ceil_a.part.dimensions.length, y_shift + 600, z_shift])
+        ceil_y_shift = -100
+        ceil_z_shift = self.vertical_panel.dimensions.length + self.thickness
+        ceil_a = self.add_object(self.ceil_A, [0, ceil_y_shift, ceil_z_shift])
+        ceil_b = self.add_object(self.ceil_B, [ceil_a.part.dimensions.length, ceil_y_shift, ceil_z_shift])
+        ceil_c = self.add_object(self.ceil_C, [ceil_a.part.dimensions.length, ceil_y_shift + 600, ceil_z_shift])
         ceil_a, ceil_b =  self.dowel_connect(ceil_a, ceil_b, dowel_dir=0, edge_dir=1)
         ceil_b, ceil_c =  self.dowel_connect(ceil_b, ceil_c, dowel_dir=1, edge_dir=0)
         #self.add_object(ts.WPart(tool, 1, 'ceil_dowel_cut'), [0, 0, 0])
 
         # front cover
-        y_cover = y_shift + 30
-        z_shift = z_shift - self.middle_front_A.dimensions.width
-        cover_a = self.add_object(self.middle_front_B, [0, y_cover, z_shift])
-        cover_b = self.add_object(self.middle_front_A, [cover_a.part.dimensions.length, y_cover, z_shift])
+        y_cover = ceil_y_shift + 20
+        cover_z_shift = ceil_z_shift - self.middle_front_A.dimensions.width
+        cover_a = self.add_object(self.middle_front_B, [0, y_cover, cover_z_shift])
+        cover_b = self.add_object(self.middle_front_A, [cover_a.part.dimensions.length, y_cover, cover_z_shift])
         cover_a, cover_b =  self.dowel_connect(cover_a, cover_b, dowel_dir=0, edge_dir=2)
         for cov in [cover_a, cover_b]:
             for ceil in [ceil_a, ceil_b]:
                  self.dowel_connect(cov, ceil, dowel_dir=2, edge_dir=0,
-                                    left_extent=-14)
+                                    left_extent=-self.cross_dowel_extent)
         #self.add_object(ts.WPart(tool, 1, 'front_dowel_cut'), [0, 0, 0])
 
 
@@ -280,14 +292,14 @@ class Wardrobe:
                 align_shift = (-bot_plank.width + self.thickness) / 2
             else:
                 align_shift = -bot_plank.width + self.thickness
-            bottom: ts.PlacedPart = self.add_object(bot_part, [x_shift + align_shift, pannel_plank.width - bot_plank.length, 0])
+            bottom: ts.PlacedPart = self.add_object(bot_part, [x_shift + align_shift, pannel_plank.width - bot_plank.length + bot_y_shift, 0])
             bot_front_l, bottom =  self.dowel_connect(bot_front_l, bottom, dowel_dir=1, edge_dir=0)
             bot_front_r, bottom =  self.dowel_connect(bot_front_r, bottom, dowel_dir=1, edge_dir=0)
-            bottom, pannel_placed =  self.dowel_connect(bottom, pannel_placed, dowel_dir=2, edge_dir=1, left_extent=cross_dowel_extent)
+            bottom, pannel_placed =  self.dowel_connect(bottom, pannel_placed, dowel_dir=2, edge_dir=1, left_extent=self.cross_dowel_extent)
             bot_front_l, pannel_placed =  self.dowel_connect(bot_front_l, pannel_placed, dowel_dir=2, edge_dir=1,
-                                                          rel_range = [None, [0, 0.7], None], left_extent=cross_dowel_extent)
+                                                          rel_range = [None, [0, 0.7], None], left_extent=self.cross_dowel_extent)
             bot_front_r, pannel_placed =  self.dowel_connect(bot_front_r, pannel_placed, dowel_dir=2, edge_dir=1,
-                                                          rel_range = [None, [0, 0.7], None], left_extent=cross_dowel_extent)
+                                                          rel_range = [None, [0, 0.7], None], left_extent=self.cross_dowel_extent)
 
             # shelf pairs
             x_shift+= self.thickness
@@ -301,10 +313,10 @@ class Wardrobe:
                 assert len(top_shlef) == 1
                 last_shelf, shlef = top_shlef[0]
                 assert last_shelf.part == shelf.part
-                self.dowel_connect(pannel_placed, last_shelf.placed, dowel_dir=2, edge_dir=1, left_extent=-cross_dowel_extent)
+                self.dowel_connect(pannel_placed, last_shelf.placed, dowel_dir=2, edge_dir=1, left_extent=-self.cross_dowel_extent)
             else:
                 for c in [ceil_a, ceil_b, ceil_c]:
-                     self.dowel_connect(pannel_placed, c, dowel_dir=2, edge_dir=1, left_extent=-cross_dowel_extent)
+                     self.dowel_connect(pannel_placed, c, dowel_dir=2, edge_dir=1, left_extent=-self.cross_dowel_extent)
 
             for height, last_shelf, shelf in shelf_pairs:
                 print(f"    shelf_h: {height}")
@@ -338,28 +350,159 @@ class Wardrobe:
         print("Total X dim: ", total_x)
 
         # front pannels
-        y_shift = y_cover + self.thickness + 2
+
+        self.front_doors(y_cover, total_x, (bot_front_l, bot_front_r), cover_a)
+
+        left_ceil_height = 2616
+        right_ceil_height = 2695
+        ceil_z_top = ceil_z_shift + self.thickness
+        middle_shift = 1000
+        dx_middle = self.ceil__front_middle.dimensions.length
+        dx_side = self.ceil_front_side.dimensions.length
+
+        # top parts 8 mm shorter in in total then total_x
+        x_top = [1, 3 +  dx_side, 5 + dx_side + dx_middle, 7 + dx_side + 2 * dx_middle]
+        top_middle = self.add_object(self.ceil__front_middle, position=[x_top[1], ceil_y_shift, ceil_z_top])
+        top_side = self.add_object(self.ceil_front_side, position=[x_top[0], ceil_y_shift, ceil_z_top])
+
+        A = left_ceil_height - ceil_z_top
+        B = right_ceil_height - ceil_z_top
+        print("top l,r:", A, B)
+
+        ceil_y_pt = lambda x : A * (1 - x / total_x) + B * x / total_x
+
+        # def cut_mill(a, b):
+        #     r = 5
+        #     start = [*a, self.thickness]
+        #     start[1] += r
+        #     end = [*b, self.thickness]
+        #     end[1] += r
+        #     return ts.MillOp(r, self.thickness, [0, 0, -1], start, end)
+
+        def top_handle_mill(a, b):
+            mill_diam = 4
+            pt_a = [*a, 0]
+            pt_a[1] += mill_diam / 2
+            pt_b = [*b, 0]
+            pt_b[1] += mill_diam / 2
+            path  = ts.handle_path(pt_a, pt_b, 0.1, 15, 0)
+            return ts.ShapeOp(ts.create_sweep_shape(path, W_rect = mill_diam, H_rect=self.thickness))
+
+        # cut first
+        def cut_part(part:ts.PlacedPart, a, b, c, d):
+            eps = 10
+            dx, dz, dy = part.dims
+            assert b - a == d - c
+            a_pt = [a + eps - a, ceil_y_pt(a + eps)]
+            b_pt = [b - eps - a, ceil_y_pt(b - eps)]
+            handle_op = top_handle_mill(a_pt, b_pt)
+            inv_handle_op = handle_op @ ts.rotate([0, 0, 1], 180) @ ts.translate([b-a, ceil_y_pt(a) + (dy - ceil_y_pt(c)), 0])
+
+            #ab_cut = cut_mill([eps, ceil_y_pt(a + eps)], [dx - eps, ceil_y_pt(b - eps)])
+            #dc_cut = cut_mill([eps, dy - ceil_y_pt(d - eps)], [dx - eps, dy - ceil_y_pt(c + eps)])
+            part.apply_op(handle_op @ part.placement)
+            part.apply_op(inv_handle_op @ part.placement)
+
+        cut_part(top_side, 0, dx_side, 2 * dx_middle + dx_side, 2 * dx_middle + 2 * dx_side)
+        cut_part(top_middle, dx_side, dx_side + dx_middle, dx_side + dx_middle, dx_side + 2 * dx_middle)
+
+        inv_rotate = ts.rotate([0, 0, 1], 180) @ ts.rotate([1, 0, 0], 90)
+        self.placed_objects.append(top_middle.copy(inv_rotate,[x_top[2], ceil_y_shift, ceil_z_top]))
+        self.placed_objects.append(top_side.copy(inv_rotate, [x_top[3], ceil_y_shift, ceil_z_top]))
+
+
+    def front_doors(self, y_cover, total_x, bot_parts, cover_a):
+        rail_y = 48
+        y_shift = y_cover + rail_y
+
         # top rail with 10 dist from front reference plane of interrior
         # pannel placed at outer rail
 
         # pannel shift from front reference plane at y=0
-        z_shift = self.thickness + 7 # slider part specification
+        front_z_shift = self.thickness + 7 # slider part specification
         x_dim_pannel = self.front_panel.dimensions.width
-        front_l = self.add_object(self.front_panel, [total_x / 2.0 - x_dim_pannel, y_shift, z_shift])
-        front_r = self.add_object(self.front_panel, [total_x / 2.0, y_shift, z_shift])
+        y_dim_pannel = self.front_panel.dimensions.length
+
+        if self.door_open:
+            # open position
+            x_left = 0
+            x_right = total_x - x_dim_pannel
+        else:
+            # closed position
+            x_left = total_x / 2.0 - x_dim_pannel
+            x_right = total_x / 2.0
+
+        front_l = self.add_object(self.front_panel, [x_left, y_shift, front_z_shift])
+        front_r = self.add_object(self.front_panel, [x_right, y_shift, front_z_shift])
+
+        door_mirror = ts.mirror(plane_pt=[total_x / 2.0, 0, 0], plane_normal=[1, 0, 0])
+
+        wheels_op = ts.drill_wheels(front_r.aabb)
+        front_l.apply_op(wheels_op @ door_mirror)
+        front_r.apply_op(wheels_op)
         for f in [front_l, front_r]:
             # Drill pannel holes for slider
             ts.drill_sliders(f)
             # top pannels wheels
-            ts.drill_wheels(f)
+
+        # mill handles
+        depth = 12
+        y_add = 10
+        handle_op = ts.handle_mill_op(40, 150, depth + y_add)
+        handle_height = 1000 # lowest OK for avarage adult
+        def door_handles(pannel, x_pannel_pos):
+            pannel.apply_op(handle_op @ ts.translate([x_pannel_pos + 50, y_shift - y_add, handle_height]))
+            pannel.apply_op(handle_op @ ts.translate([x_pannel_pos + x_dim_pannel - 50, y_shift - y_add, handle_height]))
+        door_handles(front_l, x_left)
+        door_handles(front_r, x_right)
+
+
+        from l_sys_dragon import get_dragon_vertical_segments
+        if self.draft:
+            depth = 7
+            axiom='++FX'
+        else:
+            depth = 11
+            axiom='+FX'
+
+        segments, x_range, y_range  = get_dragon_vertical_segments(depth, axiom)
+        # x_range = (-42, 10)
+        # y_range = (-42, 21)
+        #x_range = (-21, 5)
+        #y_range = (-21, 10)
+
+        x_margin = 50.0
+        def scale_solve(range1, range2):
+            r1a, r1b = range1
+            r2a, r2b = range2
+            b = (r2b - r2a) / (r1b - r1a)
+            a = r2a - r1a * b
+            return a, b
+        x_range_out = (x_right + x_margin, x_right + x_dim_pannel - x_margin)
+        x0, x1 = scale_solve(x_range, x_range_out)
+        y1 = x1
+        y_center = (y_dim_pannel + front_z_shift + handle_height) / 2.0
+        y0 = y_center - y1 * (y_range[0] + y_range[1]) / 2.0
+        sx = lambda x: x0 + x * x1
+        sy = lambda y: y0 + y * y1
+        scale_seg = lambda seg : ([sx(seg.x), y_shift, sy(seg.y1)], [sx(seg.x), y_shift, sy(seg.y2)])
+        mill_dragon = ts.OperationList(*[
+            ts.MillOp.ball(3.0, 3.0, [0, 1, 0], *scale_seg(seg))
+            for seg in segments
+            if seg.y1 != seg.y2
+        ])
+        front_r.apply_op(mill_dragon)
+        front_l.apply_op(mill_dragon @ door_mirror)
+
+        bot_front_l, bot_front_r = bot_parts
         bot_mill = ts.bottom_slider_profile(
             x_dim=total_x, y_shift=y_shift + self.thickness / 2.0, z_shift=self.thickness)
         bot_front_l.apply_op(bot_mill)
         bot_front_r.apply_op(bot_mill)
 
-        # test box
-        dims = (front_r.aabb[1, 0] - front_l.aabb[0, 0], 50, 56)
-        top_rail_box = freecad.make_box(dims, origin=[0, cover_a.aabb[1, 1], cover_a.aabb[1, 2] - dims[2]])
+        # test rail box
+        dims = (3000, rail_y, 56)
+        top_rail_box = freecad.make_box(dims, origin=[total_x / 2.0 - dims[0] / 2.0, cover_a.aabb[1, 1], cover_a.aabb[1, 2] - dims[2]])
         self.add_object(ts.WPart(top_rail_box, 1, "top_rail"), [0, 0, 0])
         # top front pannels
         #self.add_object(self.ceil_front_side, [])
@@ -396,7 +539,7 @@ class Wardrobe:
             drill_vb_strip = None
             drill_rastex = None
             drill_pins = None
-            # drill_rail = None
+            #drill_rail = None
 
         top_shelves = lambda fittings : (
             Shelf(1500, self.shelf_top_long, fittings),
@@ -476,7 +619,7 @@ def build_from_placed(doc, placed_parts: List[ts.PlacedPart]):
         print(p.name)
         obj, cuts = p.make_obj(doc)
         # Export the selected objects to a STEP file
-        Part.export([obj], f"{p.name}.step")
+        Part.export([obj], str(model_dir / f"{p.name}.step"))
         all_objects.append(obj)
         all_cuts.extend(cuts)
     print("fuse cut objects")
@@ -484,9 +627,9 @@ def build_from_placed(doc, placed_parts: List[ts.PlacedPart]):
     cuts_shape = Part.makeCompound(all_cuts)
     cuts_obj = doc.addObject("Part::Feature", "cuts compound")
     cuts_obj.Shape = cuts_shape
-    Part.export([cuts_obj], "cuts.step")
+    Part.export([cuts_obj], str(model_dir / "cuts.step"))
 
-    Part.export(all_objects, "waredrobe.step")
+    Part.export(all_objects, str(model_dir / "waredrobe.step"))
 
 # panel1_group = doc.addObject("App::DocumentObjectGroup", "Panel1")
 # panel2_group = doc.addObject("App::DocumentObjectGroup", "Panel2")
@@ -590,7 +733,7 @@ def get_doc():
     return doc
 
 def waredrobe_model():
-    w = Wardrobe(script_dir)
+    w = Wardrobe(model_dir)
     w.list_operations("operations_list.txt")
     doc = get_doc()
     build_from_placed(doc, w.placed_objects)
@@ -599,8 +742,8 @@ def waredrobe_model():
     for obj in doc.Objects:
         obj.Visibility = True  # Make the object visible
 
-    path = script_dir / "Warderobe.FCStd"
-    doc.saveAs(str(path))
+    path = str(model_dir / "Warderobe.FCStd")
+    doc.saveAs(path)
 
 
 
@@ -649,7 +792,7 @@ def pin_drill_jig():
     doc = get_doc()
     ts.add_object(doc, "pin_drill_jig", part)
     doc.recompute()
-    path = script_dir / "pin_drill_jig.FCStd"
+    path = script_dir / "model" / "pin_drill_jig.FCStd"
     doc.saveAs(str(path))
 
 def main():

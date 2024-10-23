@@ -1,7 +1,11 @@
+import pytest
+import freecad
 from freecad import *
+
 
 from machine import DrillOp, MillOp,  OperationList
 #from tool_shapes import rotate, translate
+import FreeCAD
 
 def test_drill_op():
     drill = DrillOp(2, 3)
@@ -55,3 +59,32 @@ def test_operation_list():
         print(cca, '&',  ccb)
 
 
+
+def create(shapes):
+    # Add the shape to FreeCAD document
+    doc = FreeCAD.newDocument("MillOperation")
+    for shape in shapes:
+        part_obj = doc.addObject("Part::Feature", "MillOperation")
+        part_obj.Shape = shape
+    doc.recompute()
+
+    path = script_dir / "mill_round_test.FCStd"
+    doc.saveAs(str(path))
+
+@pytest.mark.skip
+def test_mill_cut():
+    box = freecad.make_box([500, 500, 20])
+    mill = MillOp.ball(5, 8, [0, 0, 1], [10, 10, 0], [400, 400, 0])
+    tool = mill.tool_shape
+    #tool.Tolerance = 0.01
+    res = box.cut(tool)
+    create([box, tool, res])
+
+
+def test_mill_cut():
+    box = freecad.make_box([500, 500, 20])
+    mill = MillOp(20, 15, [0, 0, 1], [10, 10, -5], [400, 400, -5], r_fillet=2)
+    tool = mill.tool_shape
+    #tool.Tolerance = 0.01
+    res = box.cut(tool)
+    create([box, tool, res])

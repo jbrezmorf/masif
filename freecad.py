@@ -52,6 +52,24 @@ def make_box(dims, origin=None):
         origin = [0, 0, 0]
     return Part.makeBox(*dims) @ translate(origin)
 
+def make_ball(radius):
+    """
+    Make a box with one corner at origin and other corner at dims,
+    parrallel with axes
+    :param dims:
+    :return:
+    """
+    return Part.makeSphere(radius)  #.toShape()
+
+def make_circle(radius, axis=[0, 0, 1], center=[0, 0, 0]):
+    """
+    Make a box with one corner at origin and other corner at dims,
+    parrallel with axes
+    :param dims:
+    :return:
+    """
+    return Part.Circle(fvec(center), fvec(axis), radius).toShape()
+
 
 ###################################š
 
@@ -68,6 +86,10 @@ def vec_list(vec: FreeCAD.Vector):
 
 
 ##########################
+
+def mirror(plane_pt: VecLike, plane_normal: VecLike) -> 'Transform':
+    placement = FreeCAD.Placement(fvec([0, 0, 0]), FreeCAD.Rotation())
+    return Transform(placement, mirror=(plane_pt, plane_normal))
 
 
 def rotate(axis:VecLike, angle:Union[float, VecLike]) -> 'Transform':
@@ -91,7 +113,8 @@ def translate(pos: Union[FreeCAD.Vector, List[float]]) -> 'Transform':
 
 @attrs.define
 class Transform:
-    placement: FreeCAD.Placement
+    placement: FreeCAD.Placement = FreeCAD.Placement(FreeCAD.Vector(0,0,0), FreeCAD.Rotation())
+    mirror: Tuple[VecLike, VecLike] = None  # (plane_point, plane_normal)
 
     def __matmul__(self, other: 'Transform'):
         """
@@ -102,7 +125,15 @@ class Transform:
         :param other:
         :return:
         """
-        return Transform(other.placement * self.placement)
+        return Transform(other.placement * self.placement, mirror=other.plane_transform(self.mirror))
+
+    def plane_transform(self, plane):
+        if plane is None:
+            return None
+        else:
+            point, normal = plane
+            return (fvec(point) @ self, normal @ self.rotation())
+
 
     def __rmatmul__(self, shape: Union[Part.Shape, FreeCAD.Vector]):
         """
@@ -111,11 +142,23 @@ class Transform:
         if isinstance(shape, Part.Shape):
 
             # Apply the placement transform to the shape
+            if self.mirror is not None:
+                point, normal = self.mirror
+                mir_shape = Part.Mirror(shape, fvec(point), fvec(normal))
+            else:
+                mir_shape = shape
             mat = self.placement.toMatrix()
-            transformed_shape = shape.transformGeometry(mat)
+            transformed_shape = mir_shape.transformGeometry(mat)
             return transformed_shape
         elif isinstance(shape, FreeCAD.Vector):
-            return self.placement.multVec(shape)
+            if self.mirror is not None:
+                point, normal = self.mirror
+                normal = fvec(normal).normalize()
+                n_comp = normal.dot(shape - fvec(point))
+                mir_shape = shape  - 2 * n_comp * normal
+            else:
+                mir_shape = shape
+            return self.placement.multVec(mir_shape)
         else:
             raise TypeError(f"The right operand must be of type `Part.Shape` not {type(shape)}.")
 

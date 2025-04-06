@@ -1,0 +1,144 @@
+Poznámky od CNC:
+- nutné vylepšit zarovnávání desek: 
+  přípravek pro roh (100mm od kraje aretovat 2 šrouby)
+  další přípravek stejně
+- lépe řešit fixaci, ideální packy s drážkou, volné police mají kolíčky 40mm od kraje, dost místa
+- závaží pro srovnání křivých desek
+- ověřit předvrtání pro lišty také 5mm
+- ověřit matice že jsou na vrtání 8mm
+- koupit nové vrtáky do dřeva
+
+Ohledně programu:
+- vhodné předpřipravené konfigurace jednotlivých děr a jen poskládat program, 
+
+lépe řešit sonda
+==================
+Improvements for further versions:
+- generate pieces dimensions from overall scheme
+- pieces rotations all parameteric, do not read from a table
+- own interface to all FreeCAD methods - document them
+- reimplement MillOp using a path and extrusion, current Loft based approach has problem with 
+  application of fillet to all edges
+- test basic functionalities
+- move extra stuff (top pieces) to separate methods in main file
+- try to parametrize/generalize: 
+  - front doors
+  - detection of contacts and application of dowels, with owerwrite by a list of piece pairs
+  - class like access to placed parts (planks are part of then not created explicitely)
+- automatic visualization in FreeCAD (turn all vissible)
+- 
+
+
+23.10. model completed, all systems checked
+================
+TODO:
+- OK. rails ověřit současnou polohu vnitřní kolej nutno montovat jejím spodkem cca 3mm nad spodek bedny
+  pokud je jeho šířka 24, je kotvení ve výšce 12 + 3 = 15. což by znamenalo cca půlku horních latěk spodku bedny, ale při vhodně šikmé montáži by to možná šlo
+  - nutno vyrobit vhodný přípravek 3mm na podložení
+  - vrut uvnitř nic neštípe a je v dolní půlce horních latěk, pokud vyleze a vadilo by to je možné buď druhé dno z kartonu, nebo
+    zlepit
+
+- OK. Check doors in open position, check actual length of rail.
+
+
+Rails:
+- OK. Check. position of screws.
+
+
+Ramp, handles
+- OK. Ramp, moved bottom 20 forward
+- OK. Handles 
+
+- OK. height for top pieces. left 2613 < 2625,right 2692< 2704
+- OK. VB fitting
+- OK. Check. Rastex.
+    OK. Double rastex hole distance:67mm
+    OK. Single side 34mm střed - panel
+    OK. M6 fitting
+    OK. Rastex drill diam 15 and depth 13.4
+    
+
+- Check. bottom door guide. 
+- OK! Check. Front doors can open.
+- OK! Move front connection dowel of ramp.
+- OK. Check. Wheel drills.
+
+
+
+Dowels:
+- OK. kolíčky všechny 8mm
+- OK. rezerva u kolíků 1mm na každé straně
+- OK. modify dowel_row and dowel connect to keep dowel distance  distances: 4, 8, 12
+
+
+
+=====
+
+schůzka Jonáš Závorka 8.10.
+- do konce týdne poslat finální model
+- v týdnu od 21.10. realizace
+- tabulka co se bude obrábět CNC, cena 400Kč za hod. CNC včetně upínání; odhad 200Kč za operaci
+- do tabulky zvlášť ruční vrtání a jaké přípravky (vrtání děr pro rastexy, vrtání kolíčků z boku)
+
+Rails:
+- where to place big screws (only first two)
+- ? mark small screws / only 0.5 drill op
+
+
+
+
+Problém s montáží:
+Koupené vruty (Bouhause) se vejdou do velkých děr tj. první dva pásky a dvalší dva pásky dále
+=> pro chycení celého profilu nám chybí 2 kotevní body do malých děr. 
+Tam lze použít malé vruty bez předvrtání.
+
+TODO:
+Rastex:
+
+Drill tool
+
+
+
+- sjednotit rozměry do class Wardrobe
+- zmenšit počet kolíčků, sjednotit rozteče
+- 
+- vložené poličky frézovat 2 najednou
+
+
+
+
+odhad operací: 
+7*4 vertikální panely = 28
+7*1 spojovací police = 7
+3 ceil                 3
+8*0.5 bottom           4
+2 front bottom         2 
+2 fron top             2    
+---
+total                   46 operací, cca 9000Kč
+
+
+Chyby:
+- ceil díry skrz 
+
+
+==========
+celkem 13 šuplíků s pojezdy -> 6*13 = 78 vrtů kotvení pojezdů do panelů
+ vrtu koupené, možno navrhnout předvývrt
+
+========
+ 
+kotvení na šuplíky:
+13 * 4 = 52 šroub se zápustnou hlavou + matice nízká samojistící 
+... garance že se v měkkém dřevu malé vruty neuvolní, ale pracné:
+vrtání pomocí přípravku se záhlubníkem -> příslušný šroub, utahovat matici aku šroubovákem
+Nutný přípravek na vrtání ve správném místě, testovat zda se akušroubovák vejde do bedny.
+
+Alternativně si nechat poradit krátké ale široké vrutynez špičky, předvrtat (skrz)
+výhody: bez přípravku, vrtat skrze pojezd; lepší manipulace zvenčí
+
+.. asi aplikovatelné na spodky, ale ty nemohu použít všude
+
+================
+
+koupit tyč a její kotvení (dodělat na místě)

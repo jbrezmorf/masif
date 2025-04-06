@@ -118,7 +118,7 @@ class Wardrobe:
 
         # Load the ODS file
         # Replace 'your_file.ods' with the path to your ODS file
-        df = pd.read_excel(workdir / 'Objednávka MAPH.ods', engine='odf', header=None)
+        df = pd.read_excel(workdir / '..' / 'Objednávka MAPH.ods', engine='odf', header=None)
 
 
         self.dowel = lambda *a, **b : ts.dowel(*a, **b, diam=self.dowel_diam, length=self.dowel_len)
@@ -536,10 +536,12 @@ class Wardrobe:
         drill_pins = self.drill_pins
         drill_rail = self.drill_rail
         if self.draft:
-            drill_vb_strip = None
-            drill_rastex = None
-            drill_pins = None
+
+            #drill_vb_strip = None
+            #drill_rastex = None
+            #drill_pins = None
             #drill_rail = None
+            pass
 
         top_shelves = lambda fittings : (
             Shelf(1500, self.shelf_top_long, fittings),
@@ -750,14 +752,20 @@ def waredrobe_model():
 def pin_drill_jig():
     thickness=18
     wall=3
-    clamps_len=30
-    lead_len = 20
+    clamps_len=20
+    lead_len = 20   # len of lead cylinders for drilling
+    lead_diam_tolerance = 0.5   # add to inner diameter for smooth lead
+    lead_wall = 8 - lead_diam_tolerance /2
 
     dist_8 = 80
-    holes_x_8 = [20 + dist_8 * i for i in range(4)]
-    length = 40 + holes_x_8[-1]
-    dist_10 = 120
-    holes_x_10 = [length -20 - dist_10 * i for i in range(3)]
+    #holes_x_8 = [20 + dist_8 * i for i in range(4)]
+    holes_x_8 = [30, 30 + 20, 30+40, 30+80,30+120,30+240]
+
+
+    #length = 20 + holes_x_8[-1]
+    #dist_10 = 120
+    #holes_x_10 = [length -20 - dist_10 * i for i in range(3)]
+    holes_x_10 = []
     all_holes = np.array(holes_x_8 + holes_x_10)
     all_holes.sort()
     diffs = all_holes[2:] - all_holes[1:-1]
@@ -766,10 +774,10 @@ def pin_drill_jig():
     print("Hole diffs: ", diffs)
     diffs = diffs[diffs != 0.0]
     assert diffs.min() >= (10 + 8)/2 + wall
-    length=max(holes_x_8 + holes_x_10) + holes_x_8[0]
+    length=max(holes_x_8 + holes_x_10) + 20
 
     def apply_holes(part, holes, diam):
-        cyl_out = ts.make_cylinder(diam / 2 + wall, wall +  lead_len)
+        cyl_out = ts.make_cylinder(diam / 2 + lead_wall, wall +  lead_len)
         cyl_in = ts.make_cylinder(diam / 2, wall +  lead_len)
         for x in holes:
             shift = ts.translate([x, 0, clamps_len])
@@ -781,12 +789,16 @@ def pin_drill_jig():
     outer_box = ts.make_box([length, y_dim, clamps_len+wall]) @ ts.translate([0, -y_dim/2, 0])
     cut_box = ts.make_box([length, thickness, clamps_len]) @ ts.translate([0, -thickness/2, 0])
     part = ts.cut(outer_box, cut_box)
-    part = apply_holes(part, holes_x_8, 8)
+    part = apply_holes(part, holes_x_8, 8 + lead_diam_tolerance)
     part = apply_holes(part, holes_x_10, 10)
 
-    mark_box = ts.make_box([10, wall, clamps_len / 2])
+    mark_cut_len = 15
+    tol = 1
+    mark_box = ts.make_box([mark_cut_len, wall+2*tol, clamps_len / 2]) @ ts.translate([0, -tol, 0])
     part = ts.cut(part, mark_box @ ts.translate([0, thickness / 2, 0]))
-    part = ts.cut(part, mark_box @ ts.translate([length - 10, -thickness / 2 - wall, 0]))
+    mark_cut_len = 10
+    mark_box = ts.make_box([mark_cut_len, wall+2*tol, clamps_len / 2])
+    part = ts.cut(part, mark_box @ ts.translate([length - mark_cut_len, -thickness / 2 - wall, 0]))
 
 
     doc = get_doc()
@@ -797,7 +809,7 @@ def pin_drill_jig():
 
 def main():
     waredrobe_model()
-    # pin_drill_jig()
+    #pin_drill_jig()
 
 
 main()

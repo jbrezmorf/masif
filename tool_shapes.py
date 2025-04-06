@@ -68,22 +68,23 @@ def aabb(bb:FreeCAD.BoundBox):
 def pin():
     # pin real dimensions
     pin_in_diam = 5.0
-    pin_in_l = 7.0
-    pin_out_diam = 7 + 0.5
+    pin_in_l = 8.0
+    pin_out_diam = 7.0 + 0.5
     pin_out_l = 10 + 0.5
-    pin_z = 0.0
+    pin_z = 1.0                     # have diameter sligtly inside, to prevent shlef sliding
+    
     # shelf drill extension
     #box_dims = (pin_out_l, pin_out_diam, pin_out_diam/2)
     #box = Part.makeBox(*box_dims, FreeCAD.Vector(0, -box_dims[1] / 2, ))
     #shelf_op = MillOp(pin_out_diam/2.0, pin_out_l,
     #       direction=[1, 0, 0], start=[0, 0, -pin_z], end=[0, 0, +pin_z])
     shelf_op = MillOp.ball(pin_out_diam / 2.0, pin_out_diam,
-           direction=[0, 0, 1], start=[0, 0, 0], end=[pin_out_l, 0, 0])
+           direction=[0, 0, 1], start=[0, 0, 0], end=[pin_out_l, 0, 0]) @ translate([0, 0, pin_z])
 
 
     # pannel drill
     pannel_op = DrillOp(pin_in_diam/2, pin_in_l,
-            start=[0, 0, pin_z], direction=[-1, 0, 0])
+            start=[0, 0, 0], direction=[-1, 0, 0]) @ translate([0, 0, pin_z])
 
     # # Create the left barrel (inner)
     # left_barrel = Part.makeCylinder(pin_in_diam / 2, pin_in_l)
@@ -190,7 +191,7 @@ def rastex(shelf_thickness, through:bool=False):
 
     # Rastex 15 for 18mm panels
     hetix_diam = 15  # 15 exact
-    hetix_l = 13.4     # 13 exact
+    hetix_l = 13.5     # 13 exact
     # hetix_x = 34
     if through:
         # Dvojitý kolík DU 880 (59mm) / DU853 (79mm)
@@ -201,7 +202,7 @@ def rastex(shelf_thickness, through:bool=False):
         # asume usage without side spring
     else:
         # kolík Twister DU 644 T (střed rastex vrtání 34mm od panelu)
-        hetix_x = 34
+        hetix_x = 34    # 36mm is a limit, rastex can not be completely fastened, and that was for 0.5 wider rastex hale
         # M6 fitting
         pin_in_diam = 8
         pin_in_l = 11.5
@@ -243,8 +244,8 @@ def vb(shelf_thickness, through=False):
     """
     # VB 36M, for 16mm shelves
     vb_diam_large = 20
-    vb_l_large = 12.5
-    vb_large_x = 10
+    vb_l_large = 14
+    vb_large_x = 9.6
     vb_diam_small = 10
     vb_l_small = 10.5
     vb_small_x = 32 + vb_large_x
@@ -277,7 +278,7 @@ def vb(shelf_thickness, through=False):
 def strong_edge(thickness, shelf_width, tool, dowel_extent, through:bool=False, dowel_fn=dowel):
     rastex_pair = tool(thickness, through)
     dowel_pair = dowel_fn(left_extent=dowel_extent) @ translate([0, 0, thickness/2.0])
-    dist_from_front = 40
+    dist_from_front = 30
     y_shift = shelf_width / 2 - dist_from_front  # 260
     parts = [rastex_pair, dowel_pair, dowel_pair, dowel_pair, rastex_pair]
     pannel_parts, shelf_parts = zip(*parts)
@@ -629,10 +630,11 @@ def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir,
     connect_plane_b = bb_b[i_min, dowel_dir]
     assert connect_plane_a == connect_plane_b, f"{connect_plane_a} != {connect_plane_b}"
     edge_min, edge_max = interval_intersect(bb_a[:, edge_dir], bb_b[:, edge_dir], rel_range[edge_dir])
-    edge_min, edge_max = edge_min + 15, edge_max - 15
+    edge_min, edge_max = edge_min, edge_max
+    min_edge_dist = 15
 
     dowel_positions = []
-    row_len = edge_max - edge_min
+    row_len = edge_max - edge_min - 2 * min_edge_dist
     total_len, spacing_counts = dowel_plan.get(row_len)
     if total_len == 0:
         # less then min spacing
@@ -652,8 +654,13 @@ def dowel_connect(part_a:PlacedPart, part_b:PlacedPart, dowel_dir, edge_dir,
         return part_a, part_b
     # center n dowels between edge_min edge_max
     assert dowel_positions[-1] <= row_len
+    # make distance of first dowel from the frist edge fit to the lead tool spacing
+    lead_tool_edge_dists = np.array([15, 30])
     reminder = row_len - dowel_positions[-1]
-    dowel_row_pos = [edge_min + reminder / 2.0 + pos for pos in dowel_positions]
+    i_min = np.argmin(np.abs(lead_tool_edge_dists - reminder/2 - min_edge_dist))
+    edge_dist = lead_tool_edge_dists[i_min]
+    print(f"Edge dist: {edge_dist}")
+    dowel_row_pos = [edge_min + edge_dist + pos for pos in dowel_positions]
     dowel_vec = [0, 0, 0]
     dowel_vec[dowel_dir] = 1.0
     edge_vec = [0, 0, 0]

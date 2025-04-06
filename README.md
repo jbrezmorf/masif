@@ -26,3 +26,23 @@ TODO:
 - front pannels
 - How display internall walls? 
 - save to STEP file
+
+## CNC notes
+Autodesk Fusion
+1. Deign, card: rotate manufacturing side up, corner (0, y_max) will be CNC zero
+2. Manufacture, card:
+    a) add CNC operation type (e.g. parallel 3D)
+    b) set tool, select "tvrdé dřeviny" pro pomalejší pohyb
+    c) path - selection -> select manufactured faces
+    d) set retraction height
+    OK -> add the operation
+3. right click to setup -> edit -> check slack and zero corner at (top left of the model plane)
+4. 01 on top -> save program
+
+CNC program
+1. double speed head (on strat)
+2. calibrate TLS (Z coord)
+3. go to zero
+4. verify a selected part go to it manualy, measure it is well placed
+
+==============

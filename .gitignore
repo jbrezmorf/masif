@@ -1,0 +1,6 @@
+all
+export
+ver_5
+masif_load_transform/workspace
+**/__pycache__
+**/.vscode

@@ -1,7 +1,5 @@
 import adsk.core
-import adsk.fusion
 import adsk.cam
-from pathlib import Path
 
 from models import PartContext
 
@@ -16,7 +14,7 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
         return
 
     setup = _create_setup(ctx, occurrence, slot_name, op_name="holes_8mm")
-    _create_drill_op(ctx, setup, holes, slot_name)
+    ctx._create_drill_op(setup, holes, slot_name)
     generate_gcode(ctx, occurrence, slot_name)
     ctx.log(f"holes_8mm END for {slot_name}")
 
@@ -81,7 +79,7 @@ def _detect_8mm_holes(occurrence, ctx: PartContext, slot_name: str):
 
 
 def _create_setup(ctx: PartContext, occurrence, slot_name: str, op_name: str):
-    cam = _get_cam_product(ctx)
+    cam = ctx._get_cam_product()
 
     setup_input: adsk.cam.SetupInput = cam.setups.createInput(adsk.cam.OperationTypes.MillingOperation)
     bodies = occurrence.bRepBodies
@@ -101,78 +99,3 @@ def _create_setup(ctx: PartContext, occurrence, slot_name: str, op_name: str):
     setup = cam.setups.add(setup_input)
     ctx.log(f"Created setup: {setup.name}")
     return setup
-
-
-def _get_cam_product(ctx: PartContext):
-    doc = ctx.app.activeDocument
-    cam, prod = _find_cam_in_products(doc)
-    if cam:
-        _log_cam_info(ctx, cam, prod, "CAM product found")
-        return cam
-
-    ctx.log("CAM product not found; attempting to activate Manufacture workspace")
-    ws = ctx.ui.workspaces.itemById("CAMEnvironment")
-    if ws is None:
-        ws = ctx.ui.workspaces.itemById("FusionCAMEnvironment")
-    if ws:
-        ws.activate()
-    else:
-        ctx.log("Manufacture workspace id not found")
-
-    cam, prod = _find_cam_in_products(doc)
-    assert cam, "Failed to get CAM product"
-    _log_cam_info(ctx, cam, prod, "CAM product found after activation")
-    return cam
-
-    
-
-def _find_cam_in_products(doc):
-    for i in range(doc.products.count):
-        prod = doc.products.item(i)
-        if prod.productType == "CAMProductType":
-            return adsk.cam.CAM.cast(prod), prod
-    return None, None
-
-
-def _log_cam_info(ctx: PartContext, cam, prod, prefix: str):
-    prod_name = getattr(prod, "name", "")
-    prod_type = getattr(prod, "productType", "")
-    cam_type = getattr(cam, "objectType", "")
-    ctx.log(f"{prefix}: productType={prod_type} name={prod_name} objectType={cam_type}")
-
-
-def _create_drill_op(ctx: PartContext, setup, holes, slot_name: str):
-    op = _apply_template_to_setup(ctx, setup, "masif_drill_8mm")
-    op_name = f"{slot_name}_holes_8mm"
-    op.displayName = op_name
-    
-    _set_drill_hole_faces(ctx, op, holes)
-
-    ctx.log(f"Created drilling op from template: {op_name}")
-
-    holeSelection: adsk.cam.CadObjectParameterValue = op.parameters.itemByName('holeFaces').value
-    holeSelection.value = holes
-
-    # Read back to confirm it stuck
-    readback = holeSelection.value
-    ctx.log(f"Drill op holeFaces set: count={len(readback)}")
-    # op: adsk.cam.Operation = setup.operations.add(op)
-    # Operation should already be within setup.
-    return op
-
-
-def _apply_template_to_setup(ctx: PartContext, setup, template_name: str):
-    template_path = Path(ctx.config.template_dir) / f"{template_name}.f3dhsm-template"
-    ctx.log(f"Template file: {template_path}")
-    if not template_path.exists():
-        raise RuntimeError(f"Template file not found: {template_path}")
-
-    cam_template = adsk.cam.CAMTemplate.createFromFile(str(template_path))
-    template_input = adsk.cam.CreateFromCAMTemplateInput.create()
-    template_input.camTemplate = cam_template
-    created_items = setup.createFromCAMTemplate2(template_input)
-    assert len(created_items) == 1, f"Expected single operation from template: {created_items}"    
-    ctx.log(f"Template applied: created_items count={len(created_items)}")
-    op = created_items[0]
-    ctx.log(f"Operation: item: name={op.name} objectType={op.objectType}")
-    return op

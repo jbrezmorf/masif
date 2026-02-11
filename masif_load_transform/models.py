@@ -2,11 +2,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+import zipfile
 import adsk.core
 import adsk.fusion
 import adsk.cam
-
 from tools import Logger
+
 
 def pt_diff(b, a):
     return adsk.core.Point3D.create(
@@ -16,14 +17,34 @@ def pt_diff(b, a):
 
 @dataclass(frozen=True)
 class JobConfig:
-    workdir: Path
-    logfile: Path
+    _workdir: Path
     step_path: Path
-    template_dir: Path
-    tool_library_path: Path
     shift_z_after_rot_y_cm: float = -1.8
     delete_base_import_occurrence: bool = True
 
+    @cached_property
+    def workdir(self):
+        self._workdir.mkdir(parents=True, exist_ok=True)
+        return self._workdir
+    
+    @property
+    def logfile(self):
+        logf = self.workdir / f"{self.step_path.stem}.log"
+        if logf.exists():
+            logf.unlink()
+        return logf
+
+    @property
+    def template_dir(self):
+        return (self.workdir.parent / "tools").resolve()
+
+    @property
+    def tool_library_path(self):
+        return self.template_dir / "TULab CNC.tools"
+
+    @property
+    def ncdir(self):
+        return self.workdir / "g-code"
 
 class PartContext:
     def __init__(self, config: JobConfig):
@@ -116,8 +137,60 @@ class PartContext:
 
     def _find_tool_by_full_name(self, tool_full_name: str) -> adsk.cam.Tool:
         """
+        Looks up a tool in an exported tool library file located at
+        self.config.tool_library_path by tool name/description.
+        Supports:
+          - .json tool library
+          - .tools (zipped tool library JSON)
+        Does NOT use ToolLibraries/toolLibraryAtURL (asset locator URLs only).
+        """
+        needle = (tool_full_name or "").strip().lower()
+        tool_library = self.external_tool_library
+
+        return self._find_tool_in_library_by_needle(
+            tool_library,
+            needle=needle,
+            context=f"external tool library '{Path(self.config.tool_library_path)}'",
+            tool_full_name=tool_full_name,
+        )
+
+    @cached_property
+    def external_tool_library(self) -> adsk.cam.ToolLibrary:
+        """
+        Loads and caches the external tool library from self.config.tool_library_path.
+        """
+        lib_path = Path(self.config.tool_library_path)
+        if not lib_path.is_file():
+            raise RuntimeError(f"Tool library path is not a file: '{lib_path}'")
+
+        # .tools is typically a ZIP containing the tool library JSON
+        try:
+            with zipfile.ZipFile(str(lib_path), "r") as zf:
+                names = zf.namelist()
+                json_names = [n for n in names if n.lower().endswith(".json")]
+                if not json_names:
+                    raise RuntimeError(f"No .json found inside .tools archive: '{lib_path}'")
+                if len(json_names) > 1:
+                    raise RuntimeError(f"More then single JSON within tooll library: {json_names}.")# take the first json (usually only one)
+                with zf.open(json_names[0], "r") as f:
+                    raw_json = f.read().decode("utf-8", errors="replace")
+            self.log(f"Loaded external tool library (.tools zip): '{lib_path}' -> '{json_names[0]}'")
+        except zipfile.BadZipFile as e:
+            # fallback to plain JSON
+            raw_json = lib_path.read_text(encoding="utf-8", errors="replace")
+            self.log(f"Loaded external tool library (json): '{lib_path}'")
+
+        tool_library = adsk.cam.ToolLibrary.createFromJson(raw_json)
+        if not tool_library or not tool_library.isValid:
+            raise RuntimeError(f"Failed to parse tool library JSON from: '{lib_path}'")
+
+        return tool_library
+    
+    def _find_tool_in_document_by_full_name(self, tool_full_name: str) -> adsk.cam.Tool:
+        """
         Looks up a tool in the CAM document tool library by name/description.
         Assumes you've imported tools into the document tool library.
+        (Kept for future usage.)
         """
         needle = (tool_full_name or "").strip().lower()
         if not needle:
@@ -126,6 +199,20 @@ class PartContext:
         cam = self._get_cam_product()
         lib = cam.documentToolLibrary  # document-scoped tools
 
+        return self._find_tool_in_library_by_needle(
+            lib,
+            needle=needle,
+            context="document tool library",
+            tool_full_name=tool_full_name,
+        )
+
+    def _find_tool_in_library_by_needle(self, lib, needle: str, context: str, tool_full_name: str) -> adsk.cam.Tool:
+        """
+        Shared matcher for tools in any library-like object that supports:
+          - .count
+          - .item(i)
+        Matches by tool.name or tool.description.
+        """
         best = None
         for i in range(lib.count):
             t = lib.item(i)
@@ -137,7 +224,7 @@ class PartContext:
 
             # Exact match preferred
             if needle == key_name or needle == key_desc:
-                self.log(f"Tool match exact: name='{name}' desc='{desc}'")
+                self.log(f"Tool match exact ({context}): name='{name}' desc='{desc}'")
                 return t
 
             # Substring match fallback
@@ -145,10 +232,10 @@ class PartContext:
                 best = best or t
 
         if best:
-            self.log(f"Tool match substring: name='{getattr(best,'name','')}'")
+            self.log(f"Tool match substring ({context}): name='{getattr(best, 'name', '')}'")
             return best
 
-        raise RuntimeError(f"Tool not found in document tool library: '{tool_full_name}'")
+        raise RuntimeError(f"Tool not found in {context}: '{tool_full_name}'")
 
     def _create_drill_op(self, setup, holes, slot_name: str, 
                          tool_name: str, **kw_args):
@@ -160,7 +247,7 @@ class PartContext:
 
         # Create Drill operation input.
         # Fusion typically uses string ids like "drill".
-        op_in = setup.operations.createInput("drill")
+        op_in: adsk.core.OperationInput = setup.operations.createInput("drill")
         op_in.displayName = f"{slot_name}_holes_8mm"
 
         # Assign tool explicitly (this avoids the “select tool” failure).
@@ -180,9 +267,13 @@ class PartContext:
             if prm:
                 prm.expression = expr
         for k, v in kw_args.items():
-            set_expr(k, v)
+            try:
+                set_expr(k, v)
+            except RuntimeError as e:
+                self.log(f"Invalid value: {k} = {v}.")
+                raise e
         op = setup.operations.add(op_in)
-        self.log(f"Created drill op: {op.displayName}")
+        self.log(f"Created drill op: {op_in.displayName}")
 
         # Readback sanity
         try:

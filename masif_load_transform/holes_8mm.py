@@ -30,9 +30,9 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
         drillTipThroughBottom="true",   # common flag
         useTipAngle="true",             # sometimes used for point compensation
         label="holes_8mm",
-        tool_type="drill",
-        diameter_mm=8.0,
-        diameter_tolerance_mm=0.2,
+        #tool_type="drill",
+        #diameter_mm=8.0,
+        #diameter_tolerance_mm=0.2,
     )
     ctx._create_drill_op(setup, holes, slot_name, 
                          tool_name="8mm Flat Endmill",
@@ -45,7 +45,7 @@ def generate_gcode(ctx: PartContext, setup, occurrence, slot_name: str):
     op_name = "holes_8mm"
     ctx.log(f"holes_8mm G-code START for {slot_name} setup={getattr(setup, 'name', '?')}")
 
-    output_dir = ctx.config.nc_dir
+    output_dir = ctx.config.ncdir
     output_dir.mkdir(parents=True, exist_ok=True)
     file_stem = _build_gcode_stem(ctx, slot_name)
 

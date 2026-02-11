@@ -9,7 +9,6 @@ if str(THIS_DIR) not in sys.path:
 
 import importlib
 
-
 def import_safe(module_name: str):
     module = importlib.import_module(module_name)
     importlib.reload(module)
@@ -30,11 +29,7 @@ from holes_5mm import holes_5mm
 # ----------------------------
 # USER CONFIG
 # ----------------------------
-WORKDIR = THIS_DIR / "workspace"
-STEP_PATH = WORKDIR / "vertical_panel_1.step"
-LOGFILE = WORKDIR / f"{STEP_PATH.stem}.log"
-TEMPLATE_DIR = (THIS_DIR / ".." / "templates").resolve()
-TOOL_LIBRARY_PATH = TEMPLATE_DIR / "TULab CNC.tools"
+
 
 SHIFT_Z_AFTER_ROT_Y_CM = -1.8  # -18mm
 
@@ -43,18 +38,14 @@ def run(context):
     ui = None
     ctx = None
     
-    WORKDIR.mkdir(parents=True, exist_ok=True)
-    if LOGFILE.exists():
-        LOGFILE.unlink()
+    WORKDIR = THIS_DIR / "workspace"
+    STEP_PATH = WORKDIR / "vertical_panel_1.step"
 
     config = JobConfig(
-        workdir=WORKDIR,
-        logfile=LOGFILE,
-        step_path=STEP_PATH,
-        template_dir=TEMPLATE_DIR,
-        tool_library_path=TOOL_LIBRARY_PATH,
-        shift_z_after_rot_y_cm=SHIFT_Z_AFTER_ROT_Y_CM,
-        delete_base_import_occurrence=True,
+        WORKDIR,
+        STEP_PATH,
+        SHIFT_Z_AFTER_ROT_Y_CM,
+        delete_base_import_occurrence=True
     )
     ctx = PartContext(config)
     try:

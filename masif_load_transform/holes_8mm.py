@@ -1,7 +1,9 @@
 import adsk.core
 import adsk.cam
+import time
+from pathlib import Path
 
-from models import PartContext
+#from models import PartContext
 
 
 def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
@@ -14,14 +16,140 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
         return
 
     setup = _create_setup(ctx, occurrence, slot_name, op_name="holes_8mm")
-    ctx._create_drill_op(setup, holes, slot_name)
-    generate_gcode(ctx, occurrence, slot_name)
+    tool_spec = dict(
+        # Heights: set in mm explicitly to avoid unit surprises
+        clearanceHeight="5 mm",
+        retractHeight="2 mm",
+        feedHeight="1 mm",
+        topHeight="0 mm",
+
+        # Bottom: drill through slightly (tweak if you want)
+        bottomHeight="-0.2 mm",
+
+        # Drill cycle options (names vary by post; set only if they exist)
+        drillTipThroughBottom="true",   # common flag
+        useTipAngle="true",             # sometimes used for point compensation
+        label="holes_8mm",
+        tool_type="drill",
+        diameter_mm=8.0,
+        diameter_tolerance_mm=0.2,
+    )
+    ctx._create_drill_op(setup, holes, slot_name, 
+                         tool_name="8mm Flat Endmill",
+                         **tool_spec)
+    generate_gcode(ctx, setup, occurrence, slot_name)
     ctx.log(f"holes_8mm END for {slot_name}")
 
 
-def generate_gcode(ctx: PartContext, occurrence, slot_name: str):
-    # Intentionally empty placeholder for future G-code export.
-    ctx.log(f"holes_8mm G-code TODO for {slot_name}")
+def generate_gcode(ctx: PartContext, setup, occurrence, slot_name: str):
+    op_name = "holes_8mm"
+    ctx.log(f"holes_8mm G-code START for {slot_name} setup={getattr(setup, 'name', '?')}")
+
+    output_dir = ctx.config.nc_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    file_stem = _build_gcode_stem(ctx, slot_name)
+
+    post_config = Path(ctx.config.template_dir) / "uccnc.cps"
+    if not post_config.exists():
+        raise RuntimeError(f"Post config not found: {post_config}")
+    ctx.log(f"holes_8mm G-code: using post config: {post_config}")
+
+    units = adsk.cam.PostOutputUnitOptions.MillimetersOutput
+    output_file = str(output_dir / file_stem)
+    ctx.log(
+        f"Post settings: output_dir={output_dir} file_stem={file_stem} "
+        f"post_config={post_config} units={units}"
+    )
+
+    post_input = _create_post_input(ctx, output_file, post_config, output_dir, units)
+    post_input.programName = file_stem
+    post_input.isOpenInEditor = False
+
+    _generate_toolpaths(ctx, setup)
+
+    targets = adsk.core.ObjectCollection.create()
+    targets.add(setup)
+    cam = ctx._get_cam_product()
+
+    try:
+        ok = cam.postProcess(targets, post_input)
+        ctx.log(f"holes_8mm G-code: postProcess ok={ok}")
+    except Exception as ex:
+        ctx.log(f"holes_8mm G-code: postProcess failed: {ex}")
+        return
+
+    ctx.log(f"holes_8mm G-code END for {slot_name}")
+
+
+def _build_gcode_stem(ctx: PartContext, slot_name: str) -> str:
+    return f"{Path(ctx.config.step_path).stem}_{slot_name}"
+
+
+def _generate_toolpaths(ctx: PartContext, setup):
+    cam = ctx._get_cam_product()
+
+    ops = getattr(setup, "operations", None)
+    targets = adsk.core.ObjectCollection.create()
+    if ops and getattr(ops, "count", 0) > 0:
+        for i in range(ops.count):
+            targets.add(ops.item(i))
+        ctx.log(f"holes_8mm G-code: generating toolpaths for {ops.count} operations")
+        future = cam.generateToolpath(targets)
+    else:
+        ctx.log("holes_8mm G-code: generating toolpaths for setup")
+        future = cam.generateToolpath(setup)
+
+    # Don't use hasattr on properties like isGenerationCompleted (getter may throw)
+    if not future or getattr(future, "objectType", "") != "adsk::cam::GenerateToolpathFuture":
+        # Some older calls can return bool; treat False as failure.
+        if isinstance(future, bool) and not future:
+            raise RuntimeError("Toolpath generation failed (bool False)")
+        return
+
+    start = time.time()
+
+    # Give Fusion a chance to actually start the generation
+    adsk.doEvents()
+    time.sleep(0.05)
+
+    while True:
+        adsk.doEvents()
+
+        # Tolerate the transient "Generation not started" state
+        try:
+            done = future.isGenerationCompleted
+        except RuntimeError as ex:
+            if "Generation not started" in str(ex):
+                done = False
+            else:
+                raise
+
+        if done:
+            # These can also throw in some builds; guard them too
+            try:
+                if getattr(future, "hasError", False):
+                    raise RuntimeError(getattr(future, "errorMessage", "Toolpath generation failed"))
+            except RuntimeError:
+                # If even hasError/errorMessage are flaky, just break and let post reveal issues
+                pass
+            break
+
+        if time.time() - start > 300:
+            raise RuntimeError("Toolpath generation timeout (300s)")
+
+        time.sleep(0.05)
+
+
+def _create_post_input(ctx: PartContext, output_file: str, post_config: str, output_dir: Path, units):
+    assert units is not None, "PostProcessInput units must be set"
+    return adsk.cam.PostProcessInput.create(
+        output_file,
+        str(post_config),
+        str(output_dir),
+        units,
+    )
+
+
 
 
 def _detect_8mm_holes(occurrence, ctx: PartContext, slot_name: str):

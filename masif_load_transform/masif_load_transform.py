@@ -42,22 +42,22 @@ SHIFT_Z_AFTER_ROT_Y_CM = -1.8  # -18mm
 def run(context):
     ui = None
     ctx = None
-    print("here")
-    try:
-        WORKDIR.mkdir(parents=True, exist_ok=True)
-        if LOGFILE.exists():
-            LOGFILE.unlink()
+    
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    if LOGFILE.exists():
+        LOGFILE.unlink()
 
-        config = JobConfig(
-            workdir=WORKDIR,
-            logfile=LOGFILE,
-            step_path=STEP_PATH,
-            template_dir=TEMPLATE_DIR,
-            tool_library_path=TOOL_LIBRARY_PATH,
-            shift_z_after_rot_y_cm=SHIFT_Z_AFTER_ROT_Y_CM,
-            delete_base_import_occurrence=True,
-        )
-        ctx = PartContext(config)
+    config = JobConfig(
+        workdir=WORKDIR,
+        logfile=LOGFILE,
+        step_path=STEP_PATH,
+        template_dir=TEMPLATE_DIR,
+        tool_library_path=TOOL_LIBRARY_PATH,
+        shift_z_after_rot_y_cm=SHIFT_Z_AFTER_ROT_Y_CM,
+        delete_base_import_occurrence=True,
+    )
+    ctx = PartContext(config)
+    try:
         ui = ctx.ui
 
         ctx.log("=== main.py run() VER 8mm ===")

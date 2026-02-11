@@ -284,24 +284,7 @@ class PartContext:
 
         return op
 
-    # def _create_drill_op(self, setup, holes, slot_name: str):
-    #     op = self._apply_template_to_setup(setup, "masif_drill_8mm")
-    #     op_name = f"{slot_name}_holes_8mm"
-    #     op.displayName = op_name
 
-    #     _set_drill_hole_faces(self, op, holes)
-
-    #     self.log(f"Created drilling op from template: {op_name}")
-
-    #     holeSelection: adsk.cam.CadObjectParameterValue = op.parameters.itemByName('holeFaces').value
-    #     holeSelection.value = holes
-
-    #     # Read back to confirm it stuck
-    #     readback = holeSelection.value
-    #     self.log(f"Drill op holeFaces set: count={len(readback)}")
-    #     # op: adsk.cam.Operation = setup.operations.add(op)
-    #     # Operation should already be within setup.
-    #     return op
 
     def _apply_template_to_setup(self, setup, template_name: str):
         template_path = Path(self.config.template_dir) / f"{template_name}.f3dhsm-template"

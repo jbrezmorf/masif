@@ -15,12 +15,18 @@ def pt_diff(b, a):
         b.y-a.y,
         b.z-a.z)
 
+
+def _fmt_mm(value: float) -> str:
+    s = f"{value:.3f}".rstrip("0")  #.rstrip(".")
+    return s if s else "0"
+
 @dataclass(frozen=True)
 class JobConfig:
     _workdir: Path
     step_path: Path
     shift_z_after_rot_y_cm: float = -1.8
     delete_base_import_occurrence: bool = True
+    safe_z_mm: float = 5.0
 
     @cached_property
     def workdir(self):
@@ -242,7 +248,6 @@ class PartContext:
         """
         Create a Drill operation without templates.
         """
-        cam = self._get_cam_product()
         tool = self._find_tool_by_full_name(tool_name)
 
         # Create Drill operation input.
@@ -272,17 +277,8 @@ class PartContext:
             except RuntimeError as e:
                 self.log(f"Invalid value: {k} = {v}.")
                 raise e
-        op = setup.operations.add(op_in)
-        self.log(f"Created drill op: {op_in.displayName}")
-
-        # Readback sanity
-        try:
-            rb = op.parameters.itemByName("holeFaces").value.value
-            self.log(f"Drill op holeFaces readback: count={len(rb)}")
-        except:
-            pass
-
-        return op
+        self.log(f"Created drill op input: {op_in.displayName}")
+        return op_in
 
 
 
@@ -300,4 +296,64 @@ class PartContext:
         self.log(f"Template applied: created_items count={len(created_items)}")
         op = created_items[0]
         self.log(f"Operation: item: name={op.name} objectType={op.objectType}")
+        return op
+
+
+    def add_op_drill(self, setup, holes, slot_name: str, tool_name: str, **kw_args):
+        op_in = self._create_drill_op(setup, holes, slot_name, tool_name, **kw_args)
+        op = setup.operations.add(op_in)
+        self.log(f"Created drill op: {op_in.displayName}")
+
+        try:
+            rb = op.parameters.itemByName("holeFaces").value.value
+            self.log(f"Drill op holeFaces readback: count={len(rb)}")
+        except Exception:
+            pass
+        return op
+
+    def _create_manual_nc(self, setup: adsk.cam.Setup, name: str, gcode: str) -> adsk.cam.OperationInput:
+        """
+        Minimal Manual NC OperationInput creator.
+        
+        To get a list of the available strategies, you use the Operations.compatibleStrategies property,
+         which returns a list of strategies supported for your configuration.
+        https://help.autodesk.com/view/fusion360/CHS/?guid=GUID-7F3F9D48-ED88-451A-907C-82EAE67DEA93
+        """
+        op_in = setup.operations.createInput("manual")
+        op_in.displayName = name
+
+        # Store the code in the Manual NC 'code' parameter as a quoted string expression.
+        # Use \n for multiple lines.
+        #esc = "'" + gcode.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"    
+        esc = gcode.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") 
+        # params = op_in.parameters
+        # self.log(f"Param count = {params.count}")
+        # for pn in ["action", "manualType"]:
+        #     p = op_in.parameters.itemByName(pn)
+        #     v = p.value
+        #     ch = adsk.cam.ChoiceParameterValue.cast(v)
+        #     if not ch:
+        #         self.log(f"{pn} is not a ChoiceParameterValue {getattr(v, "objectType", None)}")
+        #         continue
+        #     ok, names, values = ch.getChoices()
+        #     for n, val in zip(names, values):
+        #         self.log(f"  {n} => {val}")
+
+        
+        op_in.parameters.itemByName("message").expression = f"'{esc}'"
+        op_in.parameters.itemByName("manualType").expression = "'pass-through'"
+        return op_in
+
+    def add_op_transverse(self, setup: adsk.cam.Setup, x_mm: float, y_mm: float, name: str | None = None):
+        op_name = name or f"transverse_{_fmt_mm(x_mm)}_{_fmt_mm(y_mm)}"
+        code = "\n".join([
+            "M5",   # spin off
+            "G90",  
+            "G21",  # retract
+            f"G0 Z{_fmt_mm(self.config.safe_z_mm)}",
+            f"G0 X{_fmt_mm(x_mm)} Y{_fmt_mm(y_mm)}",
+        ])
+        op_in = self._create_manual_nc(setup, op_name, code)
+        op = setup.operations.add(op_in)
+        self.log(f"Created manual NC op: {op_in.displayName}")
         return op

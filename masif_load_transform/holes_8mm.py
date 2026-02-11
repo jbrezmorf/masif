@@ -34,9 +34,14 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
         #diameter_mm=8.0,
         #diameter_tolerance_mm=0.2,
     )
-    ctx._create_drill_op(setup, holes, slot_name, 
-                         tool_name="8mm Flat Endmill",
-                         **tool_spec)
+    ctx.add_op_drill(
+        setup,
+        holes,
+        slot_name,
+        tool_name="8mm Flat Endmill",
+        **tool_spec,
+    )
+    ctx.add_op_transverse(setup, 0.0, 0.0)
     generate_gcode(ctx, setup, occurrence, slot_name)
     ctx.log(f"holes_8mm END for {slot_name}")
 

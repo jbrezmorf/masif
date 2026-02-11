@@ -1,5 +1,3 @@
-
-
 import adsk.core
 import traceback
 from pathlib import Path
@@ -36,6 +34,7 @@ WORKDIR = THIS_DIR / "workspace"
 STEP_PATH = WORKDIR / "vertical_panel_1.step"
 LOGFILE = WORKDIR / f"{STEP_PATH.stem}.log"
 TEMPLATE_DIR = (THIS_DIR / ".." / "templates").resolve()
+TOOL_LIBRARY_PATH = TEMPLATE_DIR / "TULab CNC.tools"
 
 SHIFT_Z_AFTER_ROT_Y_CM = -1.8  # -18mm
 
@@ -43,7 +42,7 @@ SHIFT_Z_AFTER_ROT_Y_CM = -1.8  # -18mm
 def run(context):
     ui = None
     ctx = None
-
+    print("here")
     try:
         WORKDIR.mkdir(parents=True, exist_ok=True)
         if LOGFILE.exists():
@@ -54,6 +53,7 @@ def run(context):
             logfile=LOGFILE,
             step_path=STEP_PATH,
             template_dir=TEMPLATE_DIR,
+            tool_library_path=TOOL_LIBRARY_PATH,
             shift_z_after_rot_y_cm=SHIFT_Z_AFTER_ROT_Y_CM,
             delete_base_import_occurrence=True,
         )

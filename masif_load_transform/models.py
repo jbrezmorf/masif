@@ -19,6 +19,7 @@ class JobConfig:
     logfile: Path
     step_path: Path
     template_dir: Path
+    tool_library_path: Path
     shift_z_after_rot_y_cm: float = -1.8
     delete_base_import_occurrence: bool = True
 

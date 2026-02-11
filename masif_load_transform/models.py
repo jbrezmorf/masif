@@ -47,7 +47,7 @@ class JobConfig:
 
     @property
     def tool_library_path(self):
-        return self.template_dir / "TULab CNC.tools"
+        return self.template_dir / "TULab CNC_own.tools"
 
     @property
     def ncdir(self):

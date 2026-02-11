@@ -103,10 +103,10 @@ def load_and_split(ctx: PartContext):
         return new_occ
 
     created = {
-        "top_right": add_named_copy("top_right", tr_top_right),
-        "bottom_right": add_named_copy("bottom_right", tr_bottom_right),
-        "top_left": add_named_copy("top_left", tr_top_left),
-        "bottom_left": add_named_copy("bottom_left", tr_bottom_left),
+        "0_top_right": add_named_copy("0_top_right", tr_top_right),
+        "1_bottom_right": add_named_copy("1_bottom_right", tr_bottom_right),
+        "2_top_left": add_named_copy("2_top_left", tr_top_left),
+        "3_bottom_left": add_named_copy("3_bottom_left", tr_bottom_left),
     }
 
     if ctx.config.delete_base_import_occurrence:

@@ -6,14 +6,14 @@ import adsk.cam
 
 def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
     ctx.log(f"holes_8mm START for {slot_name}")
-
+    slot_name=f"{slot_name}_0_8mm"
     holes = _detect_8mm_holes(occurrence, ctx, slot_name)
     ctx.log(f"holes_8mm detected {len(holes)} cylindrical faces")
     if not holes:
         ctx.log("holes_8mm: no holes; skipping setup/op creation")
         return
 
-    setup = _create_setup(ctx, occurrence, slot_name, op_name="holes_8mm")
+    setup = _create_setup(ctx, occurrence, slot_name)
     tool_spec = dict(
         # Heights: set in mm explicitly to avoid unit surprises
         clearanceHeight="5 mm",
@@ -100,7 +100,7 @@ def _detect_8mm_holes(occurrence, ctx: PartContext, slot_name: str):
 
 
 
-def _create_setup(ctx: PartContext, occurrence, slot_name: str, op_name: str):
+def _create_setup(ctx: PartContext, occurrence, slot_name: str):
     cam = ctx._get_cam_product()
 
     setup_input: adsk.cam.SetupInput = cam.setups.createInput(adsk.cam.OperationTypes.MillingOperation)
@@ -114,7 +114,7 @@ def _create_setup(ctx: PartContext, occurrence, slot_name: str, op_name: str):
     # From some version .models is const vector reference; we must modify it instead
     body_list = [b for b in bodies]
     setup_input.models = body_list 
-    setup_input.name = f"{slot_name}_{op_name}"
+    setup_input.name = slot_name
     # input.stockMode = adsk.cam.SetupStockModes.RelativeBoxStock
     # input.parameters.itemByName('job_stockOffsetMode').expression = "'keep'"
 

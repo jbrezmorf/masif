@@ -2,6 +2,11 @@ import adsk.core
 import traceback
 from pathlib import Path
 import sys
+"""
+CNC Stepcraft Q204
+665 x 1265 x 145
+"""
+
 
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:

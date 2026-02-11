@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+import time
 import zipfile
 import adsk.core
 import adsk.fusion
@@ -357,3 +358,109 @@ class PartContext:
         op = setup.operations.add(op_in)
         self.log(f"Created manual NC op: {op_in.displayName}")
         return op
+
+    def generate_gcode(self, setup, slot_name: str, op_name: str | None = None):
+        log_name = op_name or "g-code"
+        self.log(f"{log_name} G-code START for {slot_name} setup={getattr(setup, 'name', '?')}")
+
+        output_dir = self.config.ncdir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        file_stem = self._build_gcode_stem(slot_name, op_name)
+
+        post_config = Path(self.config.template_dir) / "uccnc.cps"
+        if not post_config.exists():
+            raise RuntimeError(f"Post config not found: {post_config}")
+        self.log(f"{log_name} G-code: using post config: {post_config}")
+
+        units = adsk.cam.PostOutputUnitOptions.MillimetersOutput
+        output_file = str(output_dir / file_stem)
+        self.log(
+            f"Post settings: output_dir={output_dir} file_stem={file_stem} "
+            f"post_config={post_config} units={units}"
+        )
+
+        post_input = self._create_post_input(output_file, post_config, output_dir, units)
+        post_input.programName = file_stem
+        post_input.isOpenInEditor = False
+
+        self._generate_toolpaths(setup, log_name)
+
+        targets = adsk.core.ObjectCollection.create()
+        targets.add(setup)
+        cam = self._get_cam_product()
+
+        try:
+            ok = cam.postProcess(targets, post_input)
+            self.log(f"{log_name} G-code: postProcess ok={ok}")
+        except Exception as ex:
+            self.log(f"{log_name} G-code: postProcess failed: {ex}")
+            return
+
+        self.log(f"{log_name} G-code END for {slot_name}")
+
+    def _build_gcode_stem(self, slot_name: str, op_name: str | None) -> str:
+        base = f"{Path(self.config.step_path).stem}_{slot_name}"
+        return f"{base}_{op_name}" if op_name else base
+
+    def _generate_toolpaths(self, setup, log_name: str):
+        cam = self._get_cam_product()
+
+        ops = getattr(setup, "operations", None)
+        targets = adsk.core.ObjectCollection.create()
+        if ops and getattr(ops, "count", 0) > 0:
+            for i in range(ops.count):
+                targets.add(ops.item(i))
+            self.log(f"{log_name} G-code: generating toolpaths for {ops.count} operations")
+            future = cam.generateToolpath(targets)
+        else:
+            self.log(f"{log_name} G-code: generating toolpaths for setup")
+            future = cam.generateToolpath(setup)
+
+        # Don't use hasattr on properties like isGenerationCompleted (getter may throw)
+        if not future or getattr(future, "objectType", "") != "adsk::cam::GenerateToolpathFuture":
+            # Some older calls can return bool; treat False as failure.
+            if isinstance(future, bool) and not future:
+                raise RuntimeError("Toolpath generation failed (bool False)")
+            return
+
+        start = time.time()
+
+        # Give Fusion a chance to actually start the generation
+        adsk.doEvents()
+        time.sleep(0.05)
+
+        while True:
+            adsk.doEvents()
+
+            # Tolerate the transient "Generation not started" state
+            try:
+                done = future.isGenerationCompleted
+            except RuntimeError as ex:
+                if "Generation not started" in str(ex):
+                    done = False
+                else:
+                    raise
+
+            if done:
+                # These can also throw in some builds; guard them too
+                try:
+                    if getattr(future, "hasError", False):
+                        raise RuntimeError(getattr(future, "errorMessage", "Toolpath generation failed"))
+                except RuntimeError:
+                    # If even hasError/errorMessage are flaky, just break and let post reveal issues
+                    pass
+                break
+
+            if time.time() - start > 300:
+                raise RuntimeError("Toolpath generation timeout (300s)")
+
+            time.sleep(0.05)
+
+    def _create_post_input(self, output_file: str, post_config: str, output_dir: Path, units):
+        assert units is not None, "PostProcessInput units must be set"
+        return adsk.cam.PostProcessInput.create(
+            output_file,
+            str(post_config),
+            str(output_dir),
+            units,
+        )

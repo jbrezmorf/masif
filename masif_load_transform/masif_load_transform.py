@@ -83,6 +83,6 @@ def process_all(ctx: PartContext, created):
 
 def copy_process(ctx: PartContext, occurrence, slot_name: str):
     ctx.log(f"Processing slot: {slot_name}")
-    holes_8mm(ctx, occurrence, slot_name)
+    #holes_8mm(ctx, occurrence, slot_name)
     mill(ctx, occurrence, slot_name)
-    holes_5mm(ctx, occurrence, slot_name)
+    #holes_5mm(ctx, occurrence, slot_name)

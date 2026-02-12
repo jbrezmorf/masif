@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+import re
 import time
 import zipfile
 import adsk.core
@@ -98,14 +99,19 @@ class PartContext:
 
 
     def is_in_top(self, bb: adsk.core.BoundingBox3D, slot_name: str) -> bool:
+        """
+        Return true if the BB is in active half.
+        For top position, it is true if any BB part is in the active half.
+        For the bottom  position, whole BB must be in active half. 
+        """
         name = slot_name.strip().lower()
         assert name != ""
         height = self.dimensions.z
         self.log(f"{name}: h={height}, bbx=({bb.minPoint.x}, {bb.maxPoint.x})")
         if "top" in name:
-            return bb.minPoint.x < (height / 2.0)
+            return bb.minPoint.x < (height / 2.0) + 0.01
         if "bottom" in name:
-            return bb.maxPoint.x < (height / 2.0)
+            return bb.maxPoint.x < (height / 2.0) + 0.01
         raise RuntimeError("slot_name must include 'top' or 'bottom'")
 
     def _get_cam_product(self):
@@ -268,10 +274,22 @@ class PartContext:
 
         # ---- Minimal sensible defaults (only if present) ----
         # Make it tolerant across post/operation variants by checking presence.
-        def set_expr(param_name: str, expr: str):
+        LOWER_FIRST = re.compile(r"^[a-z]")
+        def set_expr(param_name: str, s: str):
             prm = op_in.parameters.itemByName(param_name)
-            if prm:
-                prm.expression = expr
+            
+            if not prm:
+                raise KeyError(f"Unknown parameter {param_name}")
+            if isinstance(s, str):
+                expr = f"'{s}'" if LOWER_FIRST.match(s) else s
+            else:
+                expr = f"{str(s).lower()}"
+            prm.expression = expr
+            
+        # params = op_in.parameters
+        # for i in range(params.count):
+        #     self.log(f"{params.item(i).name}")
+
         for k, v in kw_args.items():
             try:
                 set_expr(k, v)

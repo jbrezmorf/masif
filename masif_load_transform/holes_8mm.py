@@ -14,23 +14,38 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
         return
 
     setup = _create_setup(ctx, occurrence, slot_name)
+    """
+    Possible *Height_mode values:
+    'from top height'
+    'from retract height'
+    'from stock top'
+    'from model top'
+    'from selection'
+    'from hole top' / 'from hole bottom'
+    """
     tool_spec = dict(
-        # Heights: set in mm explicitly to avoid unit surprises
-        clearanceHeight="5 mm",
-        retractHeight="2 mm",
-        feedHeight="1 mm",
-        topHeight="0 mm",
+        # Clearance Height: safe Z to move around without hitting stock/clamps
+        clearanceHeight_mode="from retract height",
+        clearanceHeight_offset="8 mm",
 
-        # Bottom: drill through slightly (tweak if you want)
-        bottomHeight="-0.2 mm",
+        # Retract Height: Z to pull up to between hole positions (above the part)
+        retractHeight_mode="from stock top",
+        retractHeight_offset="2 mm",
 
-        # Drill cycle options (names vary by post; set only if they exist)
-        drillTipThroughBottom="true",   # common flag
-        useTipAngle="true",             # sometimes used for point compensation
-        label="holes_8mm",
-        #tool_type="drill",
-        #diameter_mm=8.0,
-        #diameter_tolerance_mm=0.2,
+        # Feed Height: Z where the tool switches from rapid to feed before entering the hole
+        feedHeight_mode="from stock top",
+        feedHeight_offset="1 mm",
+
+        # Top Height: the Z level considered the top of the drilling feature/entry surface
+        topHeight_mode="from stock top",
+        topHeight_offset="0 mm",
+
+        # Bottom Height: the Z level considered the drilling depth limit (hole end + breakthrough)
+        bottomHeight_mode="from hole bottom",
+        bottomHeight_offset="-0.2 mm",
+
+        # Cycle options
+        drillTipThroughBottom=True,
     )
     ctx.add_op_drill(
         setup,

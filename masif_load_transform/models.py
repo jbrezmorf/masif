@@ -310,23 +310,34 @@ class PartContext:
         self.log(f"Created drill op input: {op_in.displayName}")
         return op_in
 
+    def add_op_drill(self, setup, holes, slot_name: str, tool_name: str, **kw_args):
+        op_in = self._create_drill_op(setup, holes, slot_name, tool_name, **kw_args)
+        op = setup.operations.add(op_in)
+        self.log(f"Created drill op: {op_in.displayName}")
 
-
-    def _apply_template_to_setup(self, setup, template_name: str):
-        template_path = Path(self.config.template_dir) / f"{template_name}.f3dhsm-template"
-        self.log(f"Template file: {template_path}")
-        if not template_path.exists():
-            raise RuntimeError(f"Template file not found: {template_path}")
-
-        cam_template = adsk.cam.CAMTemplate.createFromFile(str(template_path))
-        template_input = adsk.cam.CreateFromCAMTemplateInput.create()
-        template_input.camTemplate = cam_template
-        created_items = setup.createFromCAMTemplate2(template_input)
-        assert len(created_items) == 1, f"Expected single operation from template: {created_items}"
-        self.log(f"Template applied: created_items count={len(created_items)}")
-        op = created_items[0]
-        self.log(f"Operation: item: name={op.name} objectType={op.objectType}")
+        try:
+            rb = op.parameters.itemByName("holeFaces").value.value
+            self.log(f"Drill op holeFaces readback: count={len(rb)}")
+        except Exception:
+            pass
         return op
+
+
+    # def _apply_template_to_setup(self, setup, template_name: str):
+    #     template_path = Path(self.config.template_dir) / f"{template_name}.f3dhsm-template"
+    #     self.log(f"Template file: {template_path}")
+    #     if not template_path.exists():
+    #         raise RuntimeError(f"Template file not found: {template_path}")
+
+    #     cam_template = adsk.cam.CAMTemplate.createFromFile(str(template_path))
+    #     template_input = adsk.cam.CreateFromCAMTemplateInput.create()
+    #     template_input.camTemplate = cam_template
+    #     created_items = setup.createFromCAMTemplate2(template_input)
+    #     assert len(created_items) == 1, f"Expected single operation from template: {created_items}"
+    #     self.log(f"Template applied: created_items count={len(created_items)}")
+    #     op = created_items[0]
+    #     self.log(f"Operation: item: name={op.name} objectType={op.objectType}")
+    #     return op
 
     def _create_pocket2d_op(self, setup, pocket_chains, slot_name: str, tool_name: str, **kw_args):
         """
@@ -375,17 +386,6 @@ class PartContext:
         self.log(f"Created pocket2d op input: {op_in.displayName}")
         return op_in
 
-        def add_op_drill(self, setup, holes, slot_name: str, tool_name: str, **kw_args):
-            op_in = self._create_drill_op(setup, holes, slot_name, tool_name, **kw_args)
-            op = setup.operations.add(op_in)
-            self.log(f"Created drill op: {op_in.displayName}")
-
-            try:
-                rb = op.parameters.itemByName("holeFaces").value.value
-                self.log(f"Drill op holeFaces readback: count={len(rb)}")
-            except Exception:
-                pass
-            return op
 
     def add_op_pocket2d(self, setup, pocket_chains, slot_name: str, tool_name: str, **kw_args):
         op_in = self._create_pocket2d_op(setup, pocket_chains, slot_name, tool_name, **kw_args)

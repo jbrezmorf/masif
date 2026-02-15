@@ -44,10 +44,12 @@ def load_and_split(ctx: PartContext):
     ctx.log(f"Dimensions (X,Y,Z) = thick={thick:.6f}  width={width:.6f}  height={height:.6f}")
 
     # Shift so minZ -> 0 (world Z)
+    # Shift so minX -> 0 (world X)
     shift_to_zero_z = -minp.z
-    base_shift = mat_translation(0, 0, shift_to_zero_z)
+    shift_to_zero_x = -minp.x
+    base_shift = mat_translation(shift_to_zero_x, 0, shift_to_zero_z)
     ctx.log(f"Shift-to-zero: dz = {shift_to_zero_z:.6f} (so minZ -> 0)")
-
+ 
     # Apply shift to base occurrence for confirmation
     base_occ.transform = compose(base_occ.transform, base_shift)
 

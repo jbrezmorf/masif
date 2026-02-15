@@ -38,17 +38,21 @@ from holes_5mm import holes_5mm
 
 SHIFT_Z_AFTER_ROT_Y_CM = -1.8  # -18mm
 
-
 def run(context):
     ui = None
     ctx = None
     
     WORKDIR = THIS_DIR / "workspace"
-    STEP_PATH = WORKDIR / "vertical_panel_1.step"
+    single_part(WORKDIR / "vertical_panel_6.step")
+    #for step_path in WORKDIR.glob("*.step"):
+    #    single_part(step_path)
 
+
+def single_part(part_path: Path):
+    WORKDIR = part_path.parent
     config = JobConfig(
         WORKDIR,
-        STEP_PATH,
+        part_path,
         SHIFT_Z_AFTER_ROT_Y_CM,
         delete_base_import_occurrence=True
     )
@@ -75,7 +79,6 @@ def run(context):
         ctx.logger.filelog("ERROR:\n" + err)
         ui.messageBox("Failed:\n" + err)
 
-
 def process_all(ctx: PartContext, created):
     for slot_name, occ in created.items():
         copy_process(ctx, occ, slot_name)
@@ -83,6 +86,8 @@ def process_all(ctx: PartContext, created):
 
 def copy_process(ctx: PartContext, occurrence, slot_name: str):
     ctx.log(f"Processing slot: {slot_name}")
-    #holes_8mm(ctx, occurrence, slot_name)
+    holes_8mm(ctx, occurrence, slot_name)
     mill(ctx, occurrence, slot_name)
-    #holes_5mm(ctx, occurrence, slot_name)
+    holes_5mm(ctx, occurrence, slot_name)
+
+

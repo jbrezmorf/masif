@@ -7,7 +7,7 @@ from models import PartContext
 
 def mill(ctx: PartContext, occurrence, slot_name: str):
     ctx.log(f"mill START for {slot_name}")
-    slot_name = f"{slot_name}_mill"
+    slot_name = f"{slot_name}_1_mill"
     faces = _detect_pocket_faces(occurrence, ctx, slot_name)
     ctx.log(f"mill detected {len(faces)} pocket faces")
     if not faces:
@@ -51,7 +51,7 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
         compensationType="computer",
 
         # Stock to leave (roughing style)
-        useStockToLeave=True,
+        useStockToLeave=False,
         stockToLeave="0 mm",
         verticalStockToLeave="0 mm",
 
@@ -290,3 +290,4 @@ def _create_setup(ctx: PartContext, occurrence, slot_name: str):
     setup = cam.setups.add(setup_input)
     ctx.log(f"Created setup: {setup.name}")
     return setup
+

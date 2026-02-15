@@ -25,10 +25,10 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
         clearanceHeight_offset="8 mm",
 
         retractHeight_mode="from stock top",
-        retractHeight_offset="2 mm",
+        retractHeight_offset="2.5 mm",
 
         feedHeight_mode="from stock top",
-        feedHeight_offset="1 mm",
+        feedHeight_offset="1.5 mm",
 
         topHeight_mode="from stock top",
         topHeight_offset="0 mm",
@@ -39,14 +39,27 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
         bottomHeight_mode="from stock top",
         bottomHeight_offset="-1.5 mm",
 
+
+        # Linking / ramp stuff that causes your warnings
+        entry_verticalRadius="0.2 mm",
+        rampAngle="2 deg",
+        rampClearanceHeight="0.5 mm",
+        rightCompensation = False,
+
         # IMPORTANT for “don’t mill outside”: keep cutter comp in computer
         # (If your post/strategy uses different token, your logger will show it.)
         compensationType="computer",
 
         # Stock to leave (roughing style)
         useStockToLeave=True,
-        stockToLeave="0.3 mm",
-        verticalStockToLeave="0.2 mm",
+        stockToLeave="0 mm",
+        verticalStockToLeave="0 mm",
+
+        doFinishingPasses=True,
+        finishingStepover="0.3 mm",
+        numberOfFinishingStepovers="1",
+        leadsForAllFinishingPasses=True,
+        finishFeedrate="800 mm/min",   # adjust to your machine/tool
 
         useStockContours=False,
     )

@@ -250,6 +250,35 @@ class PartContext:
 
         raise RuntimeError(f"Tool not found in {context}: '{tool_full_name}'")
 
+    LOWER_FIRST = re.compile(r"^[a-z]")
+    def set_expr(self, op_in, param_name: str, s: str):
+        prm = op_in.parameters.itemByName(param_name)
+        
+        if not prm:
+            params = op_in.parameters
+            self.log(f"Invalid Param: {param_name} = {s}.")
+            self.log("  Avaliable: " +
+                ", ".join(
+                    [f"{params.item(i).name}" for i in range(params.count)
+                     ]))
+
+            raise KeyError()
+        if isinstance(s, str):
+            expr = f"'{s}'" if self.LOWER_FIRST.match(s) else s
+        else:
+            expr = f"{str(s).lower()}"
+        try:
+            prm.expression = expr
+        except Exception as e:
+            self.log(f"Invalid value: {param_name} = {s}.")
+            ch = adsk.cam.ChoiceParameterValue.cast(prm.value)
+            if ch:
+                ok, names, values = ch.getChoices()   # values are the internal enum tokens
+                self.log(f"  OK: {ok}")
+                self.log(f"  Choices: {names}")
+                self.log(f"  Values: {values}")
+            raise e
+
     def _create_drill_op(self, setup, holes, slot_name: str, 
                          tool_name: str, **kw_args):
         """
@@ -274,28 +303,10 @@ class PartContext:
 
         # ---- Minimal sensible defaults (only if present) ----
         # Make it tolerant across post/operation variants by checking presence.
-        LOWER_FIRST = re.compile(r"^[a-z]")
-        def set_expr(param_name: str, s: str):
-            prm = op_in.parameters.itemByName(param_name)
-            
-            if not prm:
-                raise KeyError(f"Unknown parameter {param_name}")
-            if isinstance(s, str):
-                expr = f"'{s}'" if LOWER_FIRST.match(s) else s
-            else:
-                expr = f"{str(s).lower()}"
-            prm.expression = expr
-            
-        # params = op_in.parameters
-        # for i in range(params.count):
-        #     self.log(f"{params.item(i).name}")
+
 
         for k, v in kw_args.items():
-            try:
-                set_expr(k, v)
-            except RuntimeError as e:
-                self.log(f"Invalid value: {k} = {v}.")
-                raise e
+            self.set_expr(op_in, k, v)
         self.log(f"Created drill op input: {op_in.displayName}")
         return op_in
 
@@ -317,17 +328,69 @@ class PartContext:
         self.log(f"Operation: item: name={op.name} objectType={op.objectType}")
         return op
 
+    def _create_pocket2d_op(self, setup, pocket_chains, slot_name: str, tool_name: str, **kw_args):
+        """
+        Create a 2D Pocket operation input using CLOSED CHAIN geometry (outer boundary edges).
+        Mirrors the drill automation style.
+        """
+        tool = self._find_tool_by_full_name(tool_name)
 
-    def add_op_drill(self, setup, holes, slot_name: str, tool_name: str, **kw_args):
-        op_in = self._create_drill_op(setup, holes, slot_name, tool_name, **kw_args)
+        op_in = setup.operations.createInput("pocket2d")
+        op_in.displayName = f"{slot_name}_pocket2d"
+        op_in.tool = tool
+
+        # ---- Geometry: closed chains (best match to your GUI workflow) ----
+        if not pocket_chains:
+            raise RuntimeError("No pocket chains provided")
+
+        prm = op_in.parameters.itemByName("pockets")
+        if not prm:
+            raise RuntimeError("Operation has no 'pockets' parameter.")
+
+        # IMPORTANT: this is a CadContours2dParameterValue, not a CadObjectParameterValue
+        pocket_sel = adsk.cam.CadContours2dParameterValue.cast(prm.value)
+        if not pocket_sel:
+            raise RuntimeError(f"'pockets' is not CadContours2dParameterValue (got {getattr(prm.value,'objectType','?')})")
+
+        chains = pocket_sel.getCurveSelections()
+        chains.clear()
+
+        # Closed Chain == ChainSelection
+        for boundary_edges in pocket_chains:
+            ch = chains.createNewChainSelection()
+            ch.inputGeometry = boundary_edges   # <-- SAME TYPE as case A boundary_edges
+
+            # Optional: some builds expose isReverted (same meaning as GUI “Reverted”)
+            # Guard it because properties can differ by build.
+            try:
+                ch.isReverted = True
+            except:
+                pass
+
+        pocket_sel.applyCurveSelections(chains)       
+    
+        for k, v in kw_args.items():
+            self.set_expr(op_in, k, v)
+        
+        self.log(f"Created pocket2d op input: {op_in.displayName}")
+        return op_in
+
+        def add_op_drill(self, setup, holes, slot_name: str, tool_name: str, **kw_args):
+            op_in = self._create_drill_op(setup, holes, slot_name, tool_name, **kw_args)
+            op = setup.operations.add(op_in)
+            self.log(f"Created drill op: {op_in.displayName}")
+
+            try:
+                rb = op.parameters.itemByName("holeFaces").value.value
+                self.log(f"Drill op holeFaces readback: count={len(rb)}")
+            except Exception:
+                pass
+            return op
+
+    def add_op_pocket2d(self, setup, pocket_chains, slot_name: str, tool_name: str, **kw_args):
+        op_in = self._create_pocket2d_op(setup, pocket_chains, slot_name, tool_name, **kw_args)
         op = setup.operations.add(op_in)
-        self.log(f"Created drill op: {op_in.displayName}")
-
-        try:
-            rb = op.parameters.itemByName("holeFaces").value.value
-            self.log(f"Drill op holeFaces readback: count={len(rb)}")
-        except Exception:
-            pass
+        self.log(f"Created pocket2d op: {op_in.displayName}")
         return op
 
     def _create_manual_nc(self, setup: adsk.cam.Setup, name: str, gcode: str) -> adsk.cam.OperationInput:

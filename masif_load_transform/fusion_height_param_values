@@ -1,0 +1,5 @@
+bottomHeight_mode = "from point"     # (your setter will quote it)
+bottomHeight_ref  = <a selected point / entity>
+bottomHeight_offset = "0 mm"
+
+[2026-02-14 23:47:09] Choices: ('Clearance height', 'Retract height', 'Feed height', 'Top height', 'Model top', 'Model bottom', 'Stock top', 'Stock bottom', 'Fixture top', 'Fixture bottom', 'Selected contour(s)', 'Selection', 'Origin (absolute)', 'Highest of...', 'Lowest of...') [2026-02-14 23:47:09] Values: ("'from clearance height'", "'from retract height'", "'from feed height'", "'from top'", "'from surface top'", "'from surface bottom'", "'from stock top'", "'from stock bottom'", "'from fixture top'", "'from fixture bottom'", "'from contour'", "'from point'", "'from wcs'", "'from highest of'", "'from lowest of'")

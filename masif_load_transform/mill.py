@@ -15,38 +15,53 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
         return
 
     setup = _create_setup(ctx, occurrence, slot_name)
-    #_, profiles = _build_pocket_profiles(ctx, occurrence, faces)
+    chains = build_pocket_chains(faces)
     tool_name = "8mm Flat Endmill"
 
-    # _add_pocket_op(
-    #     ctx,
-    #     setup,
-    #     faces,
-    #     profiles,
-    #     slot_name,
-    #     op_name="mill_rough",
-    #     tool_name=tool_name,
-    #     stockToLeave="true",
-    #     radialStockToLeave="0.3 mm",
-    #     axialStockToLeave="0.2 mm",
-    # )
-    # _add_pocket_op(
-    #     ctx,
-    #     setup,
-    #     faces,
-    #     profiles,
-    #     slot_name,
-    #     op_name="mill_finish",
-    #     tool_name=tool_name,
-    #     stockToLeave="false",
-    #     radialStockToLeave="0 mm",
-    #     axialStockToLeave="0 mm",
-    # )
+    # Minimal, stable 2D Pocket params (tune feeds elsewhere if needed)
+    pocket_spec = dict(
+        # Heights (same system as your drill: *_mode/_offset)
+        clearanceHeight_mode="from retract height",
+        clearanceHeight_offset="8 mm",
 
-    # ctx.add_op_transverse(setup, 0.0, 0.0)
-    # ctx.generate_gcode(setup, slot_name)
-    # ctx.log(f"mill END for {slot_name}")
+        retractHeight_mode="from stock top",
+        retractHeight_offset="2 mm",
 
+        feedHeight_mode="from stock top",
+        feedHeight_offset="1 mm",
+
+        topHeight_mode="from stock top",
+        topHeight_offset="0 mm",
+
+        # Bottom of pocket plane (your faces are at -1mm from stock top)
+        # Either drive to "from selection" with offset 0, or directly set bottomHeight_value.
+        # Start with selection-based, because you already have pocket bottom faces.
+        bottomHeight_mode="from stock top",
+        bottomHeight_offset="-1.5 mm",
+
+        # IMPORTANT for “don’t mill outside”: keep cutter comp in computer
+        # (If your post/strategy uses different token, your logger will show it.)
+        compensationType="computer",
+
+        # Stock to leave (roughing style)
+        useStockToLeave=True,
+        stockToLeave="0.3 mm",
+        verticalStockToLeave="0.2 mm",
+
+        useStockContours=False,
+    )
+
+    ctx.add_op_pocket2d(
+        setup,
+        pocket_chains=chains,
+        slot_name=slot_name,
+        tool_name=tool_name,
+        **pocket_spec,
+    )
+
+    ctx.add_op_transverse(setup, 0.0, 0.0)
+    ctx.generate_gcode(setup, slot_name)
+    ctx.log(f"mill END for {slot_name}")
 
 def _detect_pocket_faces(occurrence, ctx: PartContext, slot_name: str):
     faces = []
@@ -91,29 +106,88 @@ def _detect_pocket_faces(occurrence, ctx: PartContext, slot_name: str):
     return faces
 
 
-def _build_pocket_profiles(ctx: PartContext, occurrence, faces):
-    if not faces:
-        return None, []
-    doc = ctx.app.activeDocument
-    design = adsk.fusion.Design.cast(doc.products.itemByProductType("DesignProductType"))
-    if not design:
-        raise RuntimeError("No active Design document.")
-    root = design.rootComponent
-    sketch = root.sketches.add(faces[0])
-    edge_col = adsk.core.ObjectCollection.create()
-    # for face in faces:
-    #     for loop in face.loops:
-    #         if not loop.isOuter:
-    #             continue
-    #         for coe in loop.coEdges:
-    #             edge_col.add(coe.edge)
-    # if edge_col.count > 0:
-    #     sketch.project(edge_col)
-    # profiles = [sketch.profiles.item(i) for i in range(sketch.profiles.count)]
-    # ctx.log(f"mill: pocket sketch profiles count={len(profiles)}")
-    profiles = []
-    return sketch, profiles
+def build_pocket_chains(pocket_faces):
+    """
+    pocket_faces: list[BRepFace] for all pockets (4 faces per pocket).
+    Returns: list[list[BRepEdge]] ordered closed chains (one per pocket).
+    """
+    if not pocket_faces:
+        return []
 
+    # 1) Count edges across all faces; keep only edges referenced once => outer boundaries
+    edge_counts = {}
+    token_to_edge = {}
+
+    for f in pocket_faces:
+        outer = next((loop for loop in f.loops if loop.isOuter), None)
+        if not outer:
+            continue
+
+        for coe in outer.coEdges:
+            e = coe.edge
+            tok = e.entityToken
+            token_to_edge[tok] = e
+            edge_counts[tok] = edge_counts.get(tok, 0) + 1
+
+    boundary_edges = [token_to_edge[tok] for tok, c in edge_counts.items() if c == 1]
+    if not boundary_edges:
+        return []
+
+    # 2) Build vertex -> incident boundary edges
+    v_to_edges = {}          # vertexToken -> list[BRepEdge]
+    endpoints = {}           # edgeToken -> (v1, v2)
+    for e in boundary_edges:
+        v1 = e.startVertex.entityToken
+        v2 = e.endVertex.entityToken
+        endpoints[e.entityToken] = (v1, v2)
+        v_to_edges.setdefault(v1, []).append(e)
+        v_to_edges.setdefault(v2, []).append(e)
+
+    # 3) Walk cycles (each cycle == one pocket boundary)
+    used_edges = set()
+    loops = []
+
+    for e0 in boundary_edges:
+        if e0.entityToken in used_edges:
+            continue
+
+        # start a new loop with e0
+        loop_edges = []
+        used_edges.add(e0.entityToken)
+        loop_edges.append(e0)
+
+        v_start, v_curr = endpoints[e0.entityToken]   # traverse from v_start -> v_curr
+
+        while True:
+            if v_curr == v_start:
+                break
+
+            inc = v_to_edges.get(v_curr, [])
+            if len(inc) < 2:
+                raise RuntimeError("Boundary is not a closed chain (vertex degree < 2).")
+
+            # pick the next edge: at v_curr there are typically 2 edges; choose the unused one
+            nxt = None
+            for cand in inc:
+                if cand.entityToken not in used_edges:
+                    nxt = cand
+                    break
+
+            if nxt is None:
+                # no unused outgoing edge: either we closed properly or graph is weird
+                if v_curr != v_start:
+                    raise RuntimeError("Stopped before closing loop (graph has a branch or merged pockets).")
+                break
+
+            used_edges.add(nxt.entityToken)
+            loop_edges.append(nxt)
+
+            a, b = endpoints[nxt.entityToken]
+            v_curr = b if a == v_curr else a
+
+        loops.append(loop_edges)
+
+    return loops
 
 def _add_pocket_op(
     ctx: PartContext,

@@ -135,6 +135,28 @@ class PartContext:
         self._log_cam_info(cam, prod, "CAM product found after activation")
         return cam
 
+    def create_setup(self, occurrence, slot_name: str):
+        cam = self._get_cam_product()
+
+        setup_input: adsk.cam.SetupInput = cam.setups.createInput(adsk.cam.OperationTypes.MillingOperation)
+        bodies = occurrence.bRepBodies
+        body_count = bodies.count
+        assert body_count > 0, "No bodies available for setup models"
+        self.log(f"Setup models: occurrence.bRepBodies.count={body_count}")
+
+        body_list = [b for b in bodies]
+        setup_input.models = body_list
+        setup_input.name = slot_name
+
+        setup = cam.setups.add(setup_input)
+        self.set_expr(setup, "job_stockOffsetSides", "0 mm")
+        self.set_expr(setup, "job_stockOffsetTop", "0 mm")
+        self.set_expr(setup, "job_stockOffsetBottom", "0 mm")
+
+        
+        self.log(f"Created setup: {setup.name}")
+        return setup
+
     def _find_cam_in_products(self, doc):
         for i in range(doc.products.count):
             prod = doc.products.item(i)

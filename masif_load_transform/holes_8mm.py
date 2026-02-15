@@ -1,7 +1,6 @@
 import adsk.core
-import adsk.cam
 
-#from models import PartContext
+from models import PartContext
 
 
 def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
@@ -13,7 +12,7 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
         ctx.log("holes_8mm: no holes; skipping setup/op creation")
         return
 
-    setup = _create_setup(ctx, occurrence, slot_name)
+    setup = ctx.create_setup(occurrence, slot_name)
     """
     Possible *Height_mode values:
     'from top height'
@@ -111,28 +110,3 @@ def _detect_8mm_holes(occurrence, ctx: PartContext, slot_name: str):
             faces.append(face)
             
     return faces
-
-
-
-
-def _create_setup(ctx: PartContext, occurrence, slot_name: str):
-    cam = ctx._get_cam_product()
-
-    setup_input: adsk.cam.SetupInput = cam.setups.createInput(adsk.cam.OperationTypes.MillingOperation)
-    bodies = occurrence.bRepBodies
-    body_count = bodies.count
-    assert body_count > 0, "No bodies available for setup models"
-    ctx.log(f"Setup models: occurrence.bRepBodies.count={body_count}")
-
-
-    #setup_input.models = bodies 
-    # From some version .models is const vector reference; we must modify it instead
-    body_list = [b for b in bodies]
-    setup_input.models = body_list 
-    setup_input.name = slot_name
-    # input.stockMode = adsk.cam.SetupStockModes.RelativeBoxStock
-    # input.parameters.itemByName('job_stockOffsetMode').expression = "'keep'"
-
-    setup = cam.setups.add(setup_input)
-    ctx.log(f"Created setup: {setup.name}")
-    return setup

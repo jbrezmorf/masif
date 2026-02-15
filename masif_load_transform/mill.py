@@ -1,6 +1,4 @@
 import adsk.core
-import adsk.cam
-import adsk.fusion
 
 from models import PartContext
 
@@ -14,7 +12,7 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
         ctx.log("mill: no pocket faces; skipping setup/op creation")
         return
 
-    setup = _create_setup(ctx, occurrence, slot_name)
+    setup = ctx.create_setup(occurrence, slot_name)
     chains = build_pocket_chains(faces)
     tool_name = "8mm Flat Endmill"
 
@@ -37,7 +35,7 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
         # Either drive to "from selection" with offset 0, or directly set bottomHeight_value.
         # Start with selection-based, because you already have pocket bottom faces.
         bottomHeight_mode="from stock top",
-        bottomHeight_offset="-1.5 mm",
+        bottomHeight_offset="-1 mm",
 
 
         # Linking / ramp stuff that causes your warnings
@@ -272,22 +270,4 @@ def _log_op_params(ctx: PartContext, op_in):
         ctx.log(f"mill op params: {names}")
     except Exception:
         pass
-
-
-def _create_setup(ctx: PartContext, occurrence, slot_name: str):
-    cam = ctx._get_cam_product()
-
-    setup_input: adsk.cam.SetupInput = cam.setups.createInput(adsk.cam.OperationTypes.MillingOperation)
-    bodies = occurrence.bRepBodies
-    body_count = bodies.count
-    assert body_count > 0, "No bodies available for setup models"
-    ctx.log(f"Setup models: occurrence.bRepBodies.count={body_count}")
-
-    body_list = [b for b in bodies]
-    setup_input.models = body_list
-    setup_input.name = slot_name
-
-    setup = cam.setups.add(setup_input)
-    ctx.log(f"Created setup: {setup.name}")
-    return setup
 

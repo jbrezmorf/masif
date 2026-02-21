@@ -89,13 +89,9 @@ class PartContext:
         Assumes the model is axis-aligned (only axis permutation needed).
         """
         bb = occ.boundingBox
-        dx, dy, dz, _, _ = bbox_dims_xyz(bb)
+        dx, dy, dz, minp, maxp = bbox_dims_xyz(bb)
         dims = [dx, dy, dz]
         order = sorted(range(3), key=lambda i: dims[i])
-
-        if order == [0, 1, 2]:
-            self.log("Orientation already canonical (max=Z, min=X).")
-            return
 
         AX_X = adsk.core.Vector3D.create(1, 0, 0)
         AX_Y = adsk.core.Vector3D.create(0, 1, 0)
@@ -103,6 +99,7 @@ class PartContext:
         AX_D = adsk.core.Vector3D.create(1, 1, 1)
 
         rot_map = {
+            (0, 1, 2): (AX_Z, 0),
             (0, 2, 1): (AX_X, 90),
             (1, 0, 2): (AX_Z, 90),
             (2, 1, 0): (AX_Y, 90),
@@ -111,22 +108,44 @@ class PartContext:
         }
         axis, angle = rot_map[tuple(order)]
 
-        new_dims = [dims[i] for i in order]
+        t0 = mat_translation(-minp.x, -minp.y, -minp.z)
+        rot = mat_rotation(angle, axis)
+
+        xs = (minp.x, maxp.x)
+        ys = (minp.y, maxp.y)
+        zs = (minp.z, maxp.z)
+        corners = [adsk.core.Point3D.create(x, y, z) for x in xs for y in ys for z in zs]
+
+        def apply(p, mats):
+            q = adsk.core.Point3D.create(p.x, p.y, p.z)
+            for m in mats:
+                q.transformBy(m)
+            return q
+
+        rotated = [apply(p, (t0, rot)) for p in corners]
+        minr = adsk.core.Point3D.create(
+            min(p.x for p in rotated),
+            min(p.y for p in rotated),
+            min(p.z for p in rotated),
+        )
+        maxr = adsk.core.Point3D.create(
+            max(p.x for p in rotated),
+            max(p.y for p in rotated),
+            max(p.z for p in rotated),
+        )
+        t1 = mat_translation(-minr.x, -minr.y, -minr.z)
+        occ.transform = compose(occ.transform, t0, rot, t1)
+
+        new_dims = (maxr.x - minr.x, maxr.y - minr.y, maxr.z - minr.z)
         self.log(
-            "Orientation rotate: "
+            "Orientation xform: "
             f"dims=({dx:.6f},{dy:.6f},{dz:.6f}) "
             f"new_dims=({new_dims[0]:.6f},{new_dims[1]:.6f},{new_dims[2]:.6f}) "
             f"order={order} axis=({axis.x:.1f},{axis.y:.1f},{axis.z:.1f}) angle={angle}"
         )
-        rot = mat_rotation(angle, axis)
-        occ.transform = compose(occ.transform, rot)
 
-        bb2 = occ.boundingBox
-        _, _, _, minp, _ = bbox_dims_xyz(bb2)
-        shift = mat_translation(-minp.x, -minp.y, -minp.z)
-        self.log(f"Orientation shift: min=({minp.x:.6f},{minp.y:.6f},{minp.z:.6f})")
-        occ.transform = compose(occ.transform, shift)
         self.__dict__.pop("dimensions", None)
+        return new_dims
        
 
     def load_and_split(self):
@@ -148,13 +167,11 @@ class PartContext:
         base_occ = self.original_occurrence
         if base_occ is None:
             raise RuntimeError("original_occurrence is not loaded")
-        base_comp = base_occ.component
-        self.log(f"Imported component name (raw): {base_comp.name}")
+        self.log(f"Imported component name (raw): {base_occ.component.name}")
 
-        # Measure dims from bounding box (current placement)
+        dims = self._ensure_canonical_orientation(base_occ)
+        thick, width, height = dims
         bb = base_occ.boundingBox
-        dims = self.dimensions
-        thick, width, height = dims.x, dims.y, dims.z
         _, _, _, minp, maxp = bbox_dims_xyz(bb)
 
         self.log(f"BoundingBox min = ({minp.x:.6f}, {minp.y:.6f}, {minp.z:.6f})")
@@ -163,13 +180,14 @@ class PartContext:
 
         # Shift so minZ -> 0 (world Z)
         # Shift so minX -> 0 (world X)
-        shift_to_zero_z = -minp.z
-        shift_to_zero_x = -minp.x
-        base_shift = mat_translation(shift_to_zero_x, 0, shift_to_zero_z)
-        self.log(f"Shift-to-zero: dz = {shift_to_zero_z:.6f} (so minZ -> 0)")
+        #shift_to_zero_z = -minp.z
+        #shift_to_zero_x = -minp.x
+        #base_shift = mat_translation(shift_to_zero_x, 0, shift_to_zero_z)
+        #self.log(f"Shift-to-zero: dz = {shift_to_zero_z:.6f} (so minZ -> 0)")
     
         # Apply shift to base occurrence for confirmation
-        base_occ.transform = compose(base_occ.transform, base_shift)
+        #base_occ.transform = compose(base_occ.transform, base_shift)
+        base_tr = base_occ.transform
 
         # Verify
         bb2 = base_occ.boundingBox
@@ -205,11 +223,11 @@ class PartContext:
             mat_rotation(90, AX_Y),
         )
 
-        # Apply base shift to all slot transforms (key fix)
-        tr_top_right = compose(base_shift, tr_top_right_raw)
-        tr_bottom_right = compose(base_shift, tr_bottom_right_raw)
-        tr_top_left = compose(base_shift, tr_top_left_raw)
-        tr_bottom_left = compose(base_shift, tr_bottom_left_raw)
+        # Apply base occurrence transform (canonical rotation + shift)
+        tr_top_right = compose(base_tr, tr_top_right_raw)
+        tr_bottom_right = compose(base_tr, tr_bottom_right_raw)
+        tr_top_left = compose(base_tr, tr_top_left_raw)
+        tr_bottom_left = compose(base_tr, tr_bottom_left_raw)
 
         def add_named_copy(slot_name: str, tr: adsk.core.Matrix3D):
             new_occ = occs.addNewComponentCopy(base_comp, tr)
@@ -259,7 +277,6 @@ class PartContext:
         if not imported:
             raise RuntimeError("Import finished but no new occurrence detected.")
         self.original_occurrence = imported[0]
-        self._ensure_canonical_orientation(self.original_occurrence)
 
     @cached_property
     def dimensions(self) -> adsk.core.Point3D:

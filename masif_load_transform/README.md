@@ -7,6 +7,11 @@
 4. G-code file should be generated in `workspace/g-code` up to 12 files
    (4 positions x 3 tools)   
 
+
+## Codex
+Use codex from VSCode. Not so good as cmd line CLI, but good for
+highlevel edits and decrease syntax errors.
+
 ## Script functions
 - Copy part 4 times to four positions.
 - Apply 3 tools to each positions.

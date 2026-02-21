@@ -62,7 +62,7 @@ class PartContext:
         self.ui = self.app.userInterface
         self.logger = Logger(config.workdir, config.logfile)
         self.original_occurrence = None
-        self.load()
+       
 
     def log(self, msg: str):
         self.logger.log(self.ui, msg)
@@ -138,6 +138,7 @@ class PartContext:
         Returns:
             dict[str, adsk.fusion.Occurrence]  # slot_name -> created occurrence
         """
+        self.load()
         app = self.app
         shift_z_after_rot_y_cm = self.config.shift_z_after_rot_y_cm
         occs = self.root.occurrences
@@ -249,7 +250,7 @@ class PartContext:
         before_tokens = set(occs.item(i).entityToken for i in range(occs.count))
         imp = self.app.importManager
         opts = imp.createSTEPImportOptions(str(step_path))
-        imp.importToTarget(opts, root)
+        imp.importToTarget(opts, self.root)
         imported = []
         for i in range(occs.count):
             o = occs.item(i)

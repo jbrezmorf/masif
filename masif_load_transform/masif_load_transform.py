@@ -43,9 +43,9 @@ def run(context):
     ctx = None
     
     WORKDIR = THIS_DIR / "workspace"
-    single_part(WORKDIR / "vertical_panel_6.step")
-    #for step_path in WORKDIR.glob("*.step"):
-    #    single_part(step_path)
+    #single_part(WORKDIR / "vertical_panel_6.step")
+    for step_path in WORKDIR.glob("*.step"):
+        single_part(step_path)
 
 
 def single_part(part_path: Path):

@@ -82,6 +82,51 @@ class PartContext:
     @cached_property
     def part_name(self) -> str:
         return Path(self.config.step_path).stem
+    
+    def _ensure_canonical_orientation(self, occ: adsk.fusion.Occurrence):
+        """
+        Rotate the occurrence so the longest dimension is Z and smallest is X.
+        Assumes the model is axis-aligned (only axis permutation needed).
+        """
+        bb = occ.boundingBox
+        dx, dy, dz, _, _ = bbox_dims_xyz(bb)
+        dims = [dx, dy, dz]
+        order = sorted(range(3), key=lambda i: dims[i])
+
+        if order == [0, 1, 2]:
+            self.log("Orientation already canonical (max=Z, min=X).")
+            return
+
+        AX_X = adsk.core.Vector3D.create(1, 0, 0)
+        AX_Y = adsk.core.Vector3D.create(0, 1, 0)
+        AX_Z = adsk.core.Vector3D.create(0, 0, 1)
+        AX_D = adsk.core.Vector3D.create(1, 1, 1)
+
+        rot_map = {
+            (0, 2, 1): (AX_X, 90),
+            (1, 0, 2): (AX_Z, 90),
+            (2, 1, 0): (AX_Y, 90),
+            (1, 2, 0): (AX_D, 120),
+            (2, 0, 1): (AX_D, 240),
+        }
+        axis, angle = rot_map[tuple(order)]
+
+        new_dims = [dims[i] for i in order]
+        self.log(
+            "Orientation rotate: "
+            f"dims=({dx:.6f},{dy:.6f},{dz:.6f}) "
+            f"new_dims=({new_dims[0]:.6f},{new_dims[1]:.6f},{new_dims[2]:.6f}) "
+            f"order={order} axis=({axis.x:.1f},{axis.y:.1f},{axis.z:.1f}) angle={angle}"
+        )
+        rot = mat_rotation(angle, axis)
+        occ.transform = compose(occ.transform, rot)
+
+        bb2 = occ.boundingBox
+        _, _, _, minp, _ = bbox_dims_xyz(bb2)
+        shift = mat_translation(-minp.x, -minp.y, -minp.z)
+        self.log(f"Orientation shift: min=({minp.x:.6f},{minp.y:.6f},{minp.z:.6f})")
+        occ.transform = compose(occ.transform, shift)
+        self.__dict__.pop("dimensions", None)
        
 
     def load_and_split(self):
@@ -213,6 +258,7 @@ class PartContext:
         if not imported:
             raise RuntimeError("Import finished but no new occurrence detected.")
         self.original_occurrence = imported[0]
+        self._ensure_canonical_orientation(self.original_occurrence)
 
     @cached_property
     def dimensions(self) -> adsk.core.Point3D:

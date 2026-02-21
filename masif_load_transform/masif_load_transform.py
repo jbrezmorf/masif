@@ -21,12 +21,10 @@ def import_safe(module_name: str):
 
 import_safe("tools")
 import_safe("models")
-import_safe("split")
 import_safe("holes_8mm")
 import_safe("mill")
 import_safe("holes_5mm")
 from models import JobConfig, PartContext
-from split import load_and_split
 from holes_8mm import holes_8mm
 from mill import mill
 from holes_5mm import holes_5mm
@@ -62,7 +60,7 @@ def single_part(part_path: Path):
 
         ctx.log("=== main.py run() VER 8mm ===")
 
-        created = load_and_split(ctx)
+        created = ctx.load_and_split()
         process_all(ctx, created)
 
         # Show result summary

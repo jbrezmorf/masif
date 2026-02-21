@@ -78,6 +78,10 @@ class PartContext:
     @cached_property
     def root(self) -> adsk.fusion.Component:
         return self.design.rootComponent
+
+    @cached_property
+    def part_name(self) -> str:
+        return Path(self.config.step_path).stem
        
 
     def load_and_split(self):
@@ -172,11 +176,12 @@ class PartContext:
             self.log(f"Created slot: {slot_name}")
             return new_occ
 
+        part = self.part_name
         created = {
-            "0_top_right": add_named_copy("0_top_right", tr_top_right),
-            "1_bottom_right": add_named_copy("1_bottom_right", tr_bottom_right),
-            "2_top_left": add_named_copy("2_top_left", tr_top_left),
-            "3_bottom_left": add_named_copy("3_bottom_left", tr_bottom_left),
+            f"{part}_0_top_right": add_named_copy(f"{part}_0_top_right", tr_top_right),
+            f"{part}_1_bottom_right": add_named_copy(f"{part}_1_bottom_right", tr_bottom_right),
+            f"{part}_2_top_left": add_named_copy(f"{part}_2_top_left", tr_top_left),
+            f"{part}_3_bottom_left": add_named_copy(f"{part}_3_bottom_left", tr_bottom_left),
         }
 
         if self.config.delete_base_import_occurrence:
@@ -620,8 +625,8 @@ class PartContext:
         self.log(f"{log_name} G-code END for {slot_name}")
 
     def _build_gcode_stem(self, slot_name: str, op_name: str | None) -> str:
-        base = f"{Path(self.config.step_path).stem}_{slot_name}"
-        return f"{base}_{op_name}" if op_name else base
+        stem = slot_name
+        return f"{stem}_{op_name}" if op_name else stem
 
     def _generate_toolpaths(self, setup, log_name: str):
         cam = self._get_cam_product()

@@ -62,6 +62,7 @@ class PartContext:
         self.ui = self.app.userInterface
         self.logger = Logger(config.workdir, config.logfile)
         self.original_occurrence = None
+        self.dimensions = None
        
 
     def log(self, msg: str):
@@ -170,6 +171,7 @@ class PartContext:
         self.log(f"Imported component name (raw): {base_occ.component.name}")
 
         dims = self._ensure_canonical_orientation(base_occ)
+        self.dimensions = adsk.core.Point3D.create(dims[0], dims[1], dims[2])
         thick, width, height = dims
         bb = base_occ.boundingBox
         _, _, _, minp, maxp = bbox_dims_xyz(bb)
@@ -251,6 +253,7 @@ class PartContext:
         if self.config.delete_base_import_occurrence:
             try:
                 base_occ.deleteMe()
+                self.original_occurrence = None
                 self.log("Deleted original imported occurrence (kept only 4 slots).")
             except:
                 self.log("WARNING: Could not delete original imported occurrence.")
@@ -277,12 +280,6 @@ class PartContext:
         if not imported:
             raise RuntimeError("Import finished but no new occurrence detected.")
         self.original_occurrence = imported[0]
-
-    @cached_property
-    def dimensions(self) -> adsk.core.Point3D:
-        bb = self.original_occurrence.boundingBox
-        dd = pt_diff(bb.maxPoint, bb.minPoint)
-        return dd
 
 
     def is_in_top(self, bb: adsk.core.BoundingBox3D, slot_name: str) -> bool:

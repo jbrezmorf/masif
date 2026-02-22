@@ -28,7 +28,7 @@ class JobConfig:
     _workdir: Path
     step_path: Path
     shift_z_after_rot_y_cm: float = -1.8
-    delete_base_import_occurrence: bool = True
+    delete_base_import_occurrence: bool = False
     safe_z_mm: float = 5.0
 
     @cached_property
@@ -104,8 +104,8 @@ class PartContext:
             (0, 2, 1): (AX_X, 90),
             (1, 0, 2): (AX_Z, 90),
             (2, 1, 0): (AX_Y, 90),
-            (1, 2, 0): (AX_D, 120),
-            (2, 0, 1): (AX_D, 240),
+            (1, 2, 0): (AX_D, 240),
+            (2, 0, 1): (AX_D, 120),
         }
         axis, angle = rot_map[tuple(order)]
 
@@ -129,15 +129,10 @@ class PartContext:
             min(p.y for p in rotated),
             min(p.z for p in rotated),
         )
-        maxr = adsk.core.Point3D.create(
-            max(p.x for p in rotated),
-            max(p.y for p in rotated),
-            max(p.z for p in rotated),
-        )
         t1 = mat_translation(-minr.x, -minr.y, -minr.z)
         occ.transform = compose(occ.transform, t0, rot, t1)
 
-        new_dims = (maxr.x - minr.x, maxr.y - minr.y, maxr.z - minr.z)
+        new_dims = (dims[order[0]], dims[order[1]], dims[order[2]])
         self.log(
             "Orientation xform: "
             f"dims=({dx:.6f},{dy:.6f},{dz:.6f}) "
@@ -232,7 +227,7 @@ class PartContext:
         tr_bottom_left = compose(base_tr, tr_bottom_left_raw)
 
         def add_named_copy(slot_name: str, tr: adsk.core.Matrix3D):
-            new_occ = occs.addNewComponentCopy(base_comp, tr)
+            new_occ = occs.addNewComponentCopy(base_occ.component, tr)
             if not new_occ:
                 raise RuntimeError(f"addNewComponentCopy failed for slot {slot_name}")
             try:
@@ -250,16 +245,18 @@ class PartContext:
             f"{part}_3_bottom_left": add_named_copy(f"{part}_3_bottom_left", tr_bottom_left),
         }
 
-        if self.config.delete_base_import_occurrence:
-            try:
-                base_occ.deleteMe()
-                self.original_occurrence = None
-                self.log("Deleted original imported occurrence (kept only 4 slots).")
-            except:
-                self.log("WARNING: Could not delete original imported occurrence.")
-
+        self.delete_origin_occurance()
         self.log("=== load_and_split END ===")
         return created
+
+    def delete_origin_occurance(self):
+        try:
+            self.original_occurrence.deleteMe()
+            self.original_occurrence = None
+            self.log("Deleted original imported occurrence (kept only 4 slots).")
+        except:
+            self.log("WARNING: Could not delete original imported occurrence.")
+
 
     def load(self):
         if self.original_occurrence is not None:
@@ -291,11 +288,12 @@ class PartContext:
         name = slot_name.strip().lower()
         assert name != ""
         height = self.dimensions.z
+        cnc_limit = 125 # absolute limit is 1265 mm
         self.log(f"{name}: h={height}, bbx=({bb.minPoint.x}, {bb.maxPoint.x})")
         if "top" in name:
-            return bb.minPoint.x < (height / 2.0) + 0.01
+            return bb.minPoint.x < cnc_limit + 0.01
         if "bottom" in name:
-            return bb.maxPoint.x < (height / 2.0) + 0.01
+            return (bb.maxPoint.x < cnc_limit + 0.01) and (height > cnc_limit)
         raise RuntimeError("slot_name must include 'top' or 'bottom'")
 
     def _get_cam_product(self):

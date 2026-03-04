@@ -293,7 +293,7 @@ class PartContext:
         if "top" in name:
             return bb.minPoint.x < cnc_limit + 0.01
         if "bottom" in name:
-            return (bb.maxPoint.x < cnc_limit + 0.01) and (height > cnc_limit)
+            return (bb.maxPoint.x < (height - cnc_limit) + 0.01) and (height > cnc_limit)
         raise RuntimeError("slot_name must include 'top' or 'bottom'")
 
     def _get_cam_product(self):

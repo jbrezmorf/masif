@@ -1,5 +1,6 @@
 import adsk.core
 
+from feeds_speeds import mill_feed_speed_params
 from models import PartContext
 
 
@@ -61,6 +62,7 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
 
         useStockContours=False,
     )
+    pocket_spec.update(mill_feed_speed_params(tool_diameter_mm=8.0, flutes=2))
 
     ctx.add_op_pocket2d(
         setup,
@@ -200,6 +202,7 @@ def build_pocket_chains(pocket_faces):
 
     return loops
 
+
 def _add_pocket_op(
     ctx: PartContext,
     setup,
@@ -270,4 +273,3 @@ def _log_op_params(ctx: PartContext, op_in):
         ctx.log(f"mill op params: {names}")
     except Exception:
         pass
-

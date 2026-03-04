@@ -1,5 +1,6 @@
 import adsk.core
 
+from feeds_speeds import drill_feed_speed_params
 from models import PartContext
 
 
@@ -37,6 +38,7 @@ def holes_5mm(ctx: PartContext, occurrence, slot_name: str):
         # Cycle options
         drillTipThroughBottom=True,
     )
+    tool_spec_full.update(drill_feed_speed_params(tool_diameter_mm=5.0))
     tool_spec_shallow = dict(tool_spec_full)
     tool_spec_shallow.update(dict(
         bottomHeight_mode="from hole top", 

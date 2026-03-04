@@ -1,5 +1,6 @@
 import adsk.core
 
+from feeds_speeds import drill_feed_speed_params
 from models import PartContext
 
 
@@ -46,6 +47,7 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
         # Cycle options
         drillTipThroughBottom=True,
     )
+    tool_spec.update(drill_feed_speed_params(tool_diameter_mm=8.0))
     ctx.add_op_drill(
         setup,
         holes,

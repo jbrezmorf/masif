@@ -25,12 +25,12 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
     """
     tool_spec = dict(
         # Clearance Height: safe Z to move around without hitting stock/clamps
-        clearanceHeight_mode="from retract height",
-        clearanceHeight_offset="8 mm",
+        clearanceHeight_mode="from wcs",
+        clearanceHeight_value=f"{ctx.config.safe_z_mm} mm",
 
         # Retract Height: Z to pull up to between hole positions (above the part)
-        retractHeight_mode="from stock top",
-        retractHeight_offset="2 mm",
+        retractHeight_mode="from wcs",
+        retractHeight_value=f"{ctx.config.safe_z_mm} mm",
 
         # Feed Height: Z where the tool switches from rapid to feed before entering the hole
         feedHeight_mode="from stock top",
@@ -52,7 +52,7 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
         setup,
         holes,
         slot_name,
-        tool_name="8mm Flat Endmill",
+        tool_name="8mm wood drill",
         **tool_spec,
     )
     ctx.add_op_transverse(setup, 0.0, 0.0)

@@ -29,7 +29,7 @@ class JobConfig:
     step_path: Path
     shift_z_after_rot_y_cm: float = -1.8
     delete_base_import_occurrence: bool = False
-    safe_z_mm: float = 5.0
+    safe_z_mm: float = 45.0
 
     @cached_property
     def workdir(self):
@@ -220,11 +220,21 @@ class PartContext:
             mat_rotation(90, AX_Y),
         )
 
+        xy_swap_longest_to_y = compose(
+            mat_rotation(90, AX_Z),
+            mat_translation(width, 0, 0),
+        )
+
         # Apply base occurrence transform (canonical rotation + shift)
-        tr_top_right = compose(base_tr, tr_top_right_raw)
-        tr_bottom_right = compose(base_tr, tr_bottom_right_raw)
-        tr_top_left = compose(base_tr, tr_top_left_raw)
-        tr_bottom_left = compose(base_tr, tr_bottom_left_raw)
+        tr_top_right = compose(base_tr, tr_top_right_raw, xy_swap_longest_to_y)
+        tr_bottom_right = compose(base_tr, tr_bottom_right_raw, xy_swap_longest_to_y)
+        tr_top_left = compose(base_tr, tr_top_left_raw, xy_swap_longest_to_y)
+        tr_bottom_left = compose(base_tr, tr_bottom_left_raw, xy_swap_longest_to_y)
+
+        self.log(
+            "Machining frame remap: "
+            f"X<=width={width:.6f} Y<=height={height:.6f} Z<=-thick={thick:.6f}"
+        )
 
         def add_named_copy(slot_name: str, tr: adsk.core.Matrix3D):
             new_occ = occs.addNewComponentCopy(base_occ.component, tr)
@@ -289,11 +299,11 @@ class PartContext:
         assert name != ""
         height = self.dimensions.z
         cnc_limit = 125 # absolute limit is 1265 mm
-        self.log(f"{name}: h={height}, bbx=({bb.minPoint.x}, {bb.maxPoint.x})")
+        self.log(f"{name}: h={height}, bby=({bb.minPoint.y}, {bb.maxPoint.y})")
         if "top" in name:
-            return bb.minPoint.x < cnc_limit + 0.01
+            return bb.minPoint.y < cnc_limit + 0.01
         if "bottom" in name:
-            return (bb.maxPoint.x < (height - cnc_limit) + 0.01) and (height > cnc_limit)
+            return (bb.maxPoint.y < (height - cnc_limit) + 0.01) and (height > cnc_limit)
         raise RuntimeError("slot_name must include 'top' or 'bottom'")
 
     def _get_cam_product(self):
@@ -334,6 +344,7 @@ class PartContext:
         self.set_expr(setup, "job_stockOffsetSides", "0 mm")
         self.set_expr(setup, "job_stockOffsetTop", "0 mm")
         self.set_expr(setup, "job_stockOffsetBottom", "0 mm")
+        self.set_expr(setup, "wcs_origin_mode", "modelOrigin")  # alternative param: "view_origin_mode"
 
         
         self.log(f"Created setup: {setup.name}")

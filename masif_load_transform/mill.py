@@ -20,11 +20,11 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
     # Minimal, stable 2D Pocket params (tune feeds elsewhere if needed)
     pocket_spec = dict(
         # Heights (same system as your drill: *_mode/_offset)
-        clearanceHeight_mode="from retract height",
-        clearanceHeight_offset="8 mm",
+        clearanceHeight_mode="from wcs",
+        clearanceHeight_value=f"{ctx.config.safe_z_mm} mm",
 
-        retractHeight_mode="from stock top",
-        retractHeight_offset="2.5 mm",
+        retractHeight_mode="from wcs",
+        retractHeight_value=f"{ctx.config.safe_z_mm} mm",
 
         feedHeight_mode="from stock top",
         feedHeight_offset="1.5 mm",

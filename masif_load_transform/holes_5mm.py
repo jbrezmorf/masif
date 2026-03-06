@@ -16,12 +16,12 @@ def holes_5mm(ctx: PartContext, occurrence, slot_name: str):
     setup = ctx.create_setup(occurrence, slot_name)
     tool_spec_full = dict(
         # Clearance Height: safe Z to move around without hitting stock/clamps
-        clearanceHeight_mode="from retract height",
-        clearanceHeight_offset="8 mm",
+        clearanceHeight_mode="from wcs",
+        clearanceHeight_value=f"{ctx.config.safe_z_mm} mm",
 
         # Retract Height: Z to pull up to between hole positions (above the part)
-        retractHeight_mode="from stock top",
-        retractHeight_offset="2 mm",
+        retractHeight_mode="from wcs",
+        retractHeight_value=f"{ctx.config.safe_z_mm} mm",
 
         # Feed Height: Z where the tool switches from rapid to feed before entering the hole
         feedHeight_mode="from stock top",
@@ -50,7 +50,7 @@ def holes_5mm(ctx: PartContext, occurrence, slot_name: str):
             setup,
             holes_exact,
             slot_name,
-            tool_name="5mm Spot Drill",
+            tool_name="5mm wood drill",
             **tool_spec_full,
         )
     if holes_shallow:

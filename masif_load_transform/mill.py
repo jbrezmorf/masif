@@ -58,12 +58,11 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
         finishingStepover="0.3 mm",
         numberOfFinishingStepovers="1",
         leadsForAllFinishingPasses=True,
-        finishFeedrate="800 mm/min",   # adjust to your machine/tool
 
         useStockContours=False,
     )
     pocket_spec.update(mill_feed_speed_params(tool_diameter_mm=8.0, flutes=2))
-
+    print(pocket_spec)
     ctx.add_op_pocket2d(
         setup,
         pocket_chains=chains,

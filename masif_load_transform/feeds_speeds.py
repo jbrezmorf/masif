@@ -14,6 +14,7 @@ class MaterialFeedSpec:
     default_flutes: int = 2
     plunge_ratio: float = 0.5
     ramp_ratio: float = 0.7
+    finish_ratio: float = 0.7
 
     def rpm_for_diameter(self, tool_diameter_mm: float) -> float:
         if tool_diameter_mm <= 0:
@@ -44,7 +45,6 @@ def drill_feed_speed_params(
     feed_plunge = rpm * feed_per_rev
     return dict(
         tool_spindleSpeed=f"{rpm:.3f} rpm",
-        tool_surfaceSpeed=f"{spec.surface_speed_m_min:.3f} m/min",
         tool_useFeedPerRevolution=True,
         tool_feedPerRevolution=f"{feed_per_rev:.6f} mm",
         tool_feedPlunge=f"{feed_plunge:.3f} mm/min",
@@ -65,12 +65,12 @@ def mill_feed_speed_params(
     feed_cutting = rpm * flute_count * chip_load
     feed_plunge = feed_cutting * spec.plunge_ratio
     feed_ramp = feed_cutting * spec.ramp_ratio
+    finish_feed = feed_cutting * spec.finish_ratio
     return dict(
         tool_spindleSpeed=f"{rpm:.3f} rpm",
-        tool_surfaceSpeed=f"{spec.surface_speed_m_min:.3f} m/min",
-        tool_useFeedPerRevolution=False,
         tool_feedPerTooth=f"{chip_load:.6f} mm",
         tool_feedCutting=f"{feed_cutting:.3f} mm/min",
         tool_feedPlunge=f"{feed_plunge:.3f} mm/min",
         tool_feedRamp=f"{feed_ramp:.3f} mm/min",
+        finishFeedrate=f"{finish_feed:.3f} mm/min",
     )

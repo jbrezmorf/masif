@@ -72,7 +72,7 @@ def _detect_lt_7_5mm_holes(occurrence, ctx: PartContext, slot_name: str):
     bodies = occurrence.bRepBodies
     tol_cm = 0.02  # 0.2 mm tolerance in cm
     target_d_cm = 0.5  # 5 mm in cm
-    max_d_cm = 0.75  # 7.5 mm in cm
+    max_d_cm = 0.55  # 7.5 mm in cm
     z0_tol = 0.01  # 0.1 mm in cm
     logged = 0
     for i in range(bodies.count):

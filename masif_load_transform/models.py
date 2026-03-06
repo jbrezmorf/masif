@@ -678,6 +678,7 @@ class PartContext:
         post_input = self._create_post_input(output_file, post_config, output_dir, units)
         post_input.programName = file_stem
         post_input.isOpenInEditor = False
+        output_path = output_dir / f"{file_stem}.nc"
 
         self._generate_toolpaths(setup, log_name)
 
@@ -691,6 +692,8 @@ class PartContext:
         except Exception as ex:
             self.log(f"{log_name} G-code: postProcess failed: {ex}")
             return
+
+        self._strip_tool_selection_sequence(output_path, log_name)
 
         self.log(f"{log_name} G-code END for {slot_name}")
 
@@ -754,9 +757,60 @@ class PartContext:
 
     def _create_post_input(self, output_file: str, post_config: str, output_dir: Path, units):
         assert units is not None, "PostProcessInput units must be set"
-        return adsk.cam.PostProcessInput.create(
+        post_input = adsk.cam.PostProcessInput.create(
             output_file,
             str(post_config),
             str(output_dir),
             units,
         )
+        post_props = adsk.core.NamedValues.create()
+        post_props.add("useToolCall", adsk.core.ValueInput.createByBoolean(False))
+        post_input.postProperties = post_props
+        self.log("Post property: useToolCall=False")
+        return post_input
+
+    def _strip_tool_selection_sequence(self, nc_path: Path, log_name: str):
+        if not nc_path.exists():
+            self.log(f"{log_name} G-code: posted file not found for tool-strip: {nc_path}")
+            return
+
+        lines = nc_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        kept = []
+        removed = []
+        skip_tool_change_move = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            if "Move to tool change position" in stripped:
+                removed.append(line)
+                skip_tool_change_move = True
+                continue
+
+            if skip_tool_change_move and "G53" in stripped and "X" in stripped and "Y" in stripped:
+                removed.append(line)
+                skip_tool_change_move = False
+                continue
+
+            skip_tool_change_move = False
+
+            if "Pause program for tool change" in stripped:
+                removed.append(line)
+                continue
+
+            if re.search(r"\bMANUAL TOOL CHANGE TO T\d+\b", stripped, re.IGNORECASE):
+                removed.append(line)
+                continue
+
+            if re.match(r"^T\d+\s*M0?6\b", stripped, re.IGNORECASE):
+                removed.append(line)
+                continue
+
+            kept.append(line)
+
+        if not removed:
+            self.log(f"{log_name} G-code: no tool-selection sequence found in {nc_path.name}")
+            return
+
+        nc_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        self.log(f"{log_name} G-code: removed {len(removed)} tool-selection lines from {nc_path.name}")

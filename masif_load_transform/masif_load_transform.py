@@ -20,6 +20,7 @@ def import_safe(module_name: str):
 
 
 import_safe("tools")
+import_safe("feeds_speeds")
 import_safe("models")
 import_safe("holes_8mm")
 import_safe("mill")

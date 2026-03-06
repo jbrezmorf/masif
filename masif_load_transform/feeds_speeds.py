@@ -27,24 +27,32 @@ class MaterialFeedSpec:
         return base_value * (tool_diameter_mm / self.base_diameter_mm)
 
 
-SOFTWOOD = MaterialFeedSpec(
-    name="softwood",
-    surface_speed_m_min=500.0,
-    drill_feed_per_rev_mm_base=0.00831714,
-    # Conservative default: derived from drill feed/rev for 2 flutes.
-    mill_chip_load_mm_base=0.00831714 / 2.0,
+SOFTWOOD_DRILL = MaterialFeedSpec(
+    name="softwood_drill",
+    surface_speed_m_min=75.0,
+    drill_feed_per_rev_mm_base=0.08,
+    mill_chip_load_mm_base=0.04,
 )
 
+SOFTWOOD_MILL = MaterialFeedSpec(
+    name="softwood_mill",
+    surface_speed_m_min=200.0,
+    drill_feed_per_rev_mm_base=0.08,
+    mill_chip_load_mm_base=0.08,
+    plunge_ratio=0.25,
+    ramp_ratio=0.5,
+    finish_ratio=0.8,
+)
 
 def drill_feed_speed_params(
     tool_diameter_mm: float,
-    spec: MaterialFeedSpec = SOFTWOOD,
+    spec: MaterialFeedSpec = SOFTWOOD_DRILL,
 ) -> dict:
     rpm = spec.rpm_for_diameter(tool_diameter_mm)
     feed_per_rev = spec.scale_by_diameter(spec.drill_feed_per_rev_mm_base, tool_diameter_mm)
     feed_plunge = rpm * feed_per_rev
     return dict(
-        tool_spindleSpeed=f"{rpm:.3f} rpm",
+        tool_spindleSpeed=f"{rpm:.0f}rpm",
         tool_useFeedPerRevolution=True,
         tool_feedPerRevolution=f"{feed_per_rev:.6f} mm",
         tool_feedPlunge=f"{feed_plunge:.3f} mm/min",
@@ -55,7 +63,7 @@ def drill_feed_speed_params(
 def mill_feed_speed_params(
     tool_diameter_mm: float,
     flutes: int | None = None,
-    spec: MaterialFeedSpec = SOFTWOOD,
+    spec: MaterialFeedSpec = SOFTWOOD_MILL,
 ) -> dict:
     rpm = spec.rpm_for_diameter(tool_diameter_mm)
     flute_count = flutes or spec.default_flutes
@@ -67,7 +75,7 @@ def mill_feed_speed_params(
     feed_ramp = feed_cutting * spec.ramp_ratio
     finish_feed = feed_cutting * spec.finish_ratio
     return dict(
-        tool_spindleSpeed=f"{rpm:.3f} rpm",
+        tool_spindleSpeed=f"{rpm:.0f}rpm",
         tool_feedPerTooth=f"{chip_load:.6f} mm",
         tool_feedCutting=f"{feed_cutting:.3f} mm/min",
         tool_feedPlunge=f"{feed_plunge:.3f} mm/min",

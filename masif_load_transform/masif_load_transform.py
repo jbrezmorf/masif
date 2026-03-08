@@ -49,6 +49,8 @@ def run(context):
 
 
 def single_part(part_path: Path):
+    #app = adsk.core.Application.get()
+    #doc = app.documents.add(adsk.core.DocumentTypes.FusionDesignDocumentType)
     WORKDIR = part_path.parent
     config = JobConfig(
         WORKDIR,
@@ -78,6 +80,11 @@ def single_part(part_path: Path):
         # log to file even if TextCommands fails
         ctx.logger.filelog("ERROR:\n" + err)
         ui.messageBox("Failed:\n" + err)
+    # finally:
+    #     try:
+    #         doc.close(False)
+    #     except:
+    #         pass
 
 def process_all(ctx: PartContext, created):
     for slot_name, occ in created.items():

@@ -55,6 +55,24 @@ class JobConfig:
     def ncdir(self):
         return self.workdir / "g-code"
 
+    @cached_property
+    def slack_dir(self):
+        return {
+            "vertical_panel_1": 59.8,
+            "vertical_panel_2": 59.6,
+            "vertical_panel_3": 59.7,
+            "vertical_panel_4": 59.9,
+            "vertical_panel_5": 59.7,
+            "vertical_panel_6": 59.9,
+            "vertical_short_1": 59.6,
+            "vertical_short_2": 59.6,
+        }
+
+    @property
+    def slack_x_cm(self) -> float:
+        real_width = self.slack_dir.get(self.step_path.stem, 60.0)
+        return 60.0 - real_width
+
 class PartContext:
     def __init__(self, config: JobConfig):
         self.config = config
@@ -221,20 +239,22 @@ class PartContext:
         )
 
         xy_swap_longest_to_y = compose(
-            mat_rotation(90, AX_Z),
-            mat_translation(width, 0, 0),
+            mat_rotation(270, AX_Z),
         )
+        slack_x_cm = self.config.slack_x_cm
+        slack_tr = mat_translation(-slack_x_cm, 0, 0)
 
         # Apply base occurrence transform (canonical rotation + shift)
         tr_top_right = compose(base_tr, tr_top_right_raw, xy_swap_longest_to_y)
-        tr_bottom_right = compose(base_tr, tr_bottom_right_raw, xy_swap_longest_to_y)
-        tr_top_left = compose(base_tr, tr_top_left_raw, xy_swap_longest_to_y)
+        tr_bottom_right = compose(base_tr, tr_bottom_right_raw, xy_swap_longest_to_y, slack_tr)
+        tr_top_left = compose(base_tr, tr_top_left_raw, xy_swap_longest_to_y, slack_tr)
         tr_bottom_left = compose(base_tr, tr_bottom_left_raw, xy_swap_longest_to_y)
 
         self.log(
             "Machining frame remap: "
-            f"X<=width={width:.6f} Y<=height={height:.6f} Z<=-thick={thick:.6f}"
+            f"X<=width={width:.6f} Y<=-height={height:.6f} Z<=-thick={thick:.6f}"
         )
+        self.log(f"Part slack: {self.part_name} -> shift_x={slack_x_cm:.6f} cm")
 
         def add_named_copy(slot_name: str, tr: adsk.core.Matrix3D):
             new_occ = occs.addNewComponentCopy(base_occ.component, tr)

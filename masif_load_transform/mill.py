@@ -26,8 +26,8 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
         retractHeight_mode="from wcs",
         retractHeight_value=f"{ctx.config.safe_z_mm} mm",
 
-        feedHeight_mode="from stock top",
-        feedHeight_offset="1.5 mm",
+        feedHeight_mode="from wcs",
+        feedHeight_value=f"{ctx.config.cycle_plane_z_mm} mm",
 
         topHeight_mode="from stock top",
         topHeight_offset="0 mm",

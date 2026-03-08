@@ -30,6 +30,9 @@ class JobConfig:
     shift_z_after_rot_y_cm: float = -1.8
     delete_base_import_occurrence: bool = False
     safe_z_mm: float = 45.0
+    cycle_plane_z_mm: float = 25.0
+    min_z_mm: float = -17.0
+    remove_tool_length_compensation: bool = False
 
     @cached_property
     def workdir(self):
@@ -713,7 +716,8 @@ class PartContext:
             self.log(f"{log_name} G-code: postProcess failed: {ex}")
             return
 
-        self._strip_tool_selection_sequence(output_path, log_name)
+        self.postprocess_nc(output_path, log_name)
+        self.check_nc(output_path, log_name)
 
         self.log(f"{log_name} G-code END for {slot_name}")
 
@@ -789,12 +793,19 @@ class PartContext:
         self.log("Post property: useToolCall=False")
         return post_input
 
-    def _strip_tool_selection_sequence(self, nc_path: Path, log_name: str):
+    def postprocess_nc(self, nc_path: Path, log_name: str):
         if not nc_path.exists():
-            self.log(f"{log_name} G-code: posted file not found for tool-strip: {nc_path}")
+            self.log(f"{log_name} G-code: posted file not found for postprocess: {nc_path}")
             return
 
-        lines = nc_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        self._backup_original_nc(nc_path, log_name)
+        self._post_remove_tool_change_lines(nc_path, log_name)
+        if self.config.remove_tool_length_compensation:
+            self._post_remove_length_compensation(nc_path, log_name)
+        self._post_clamp_min_z(nc_path, log_name)
+
+    def _post_remove_tool_change_lines(self, nc_path: Path, log_name: str):
+        lines = self._read_nc_lines(nc_path)
         kept = []
         removed = []
         skip_tool_change_move = False
@@ -829,8 +840,115 @@ class PartContext:
             kept.append(line)
 
         if not removed:
-            self.log(f"{log_name} G-code: no tool-selection sequence found in {nc_path.name}")
+            self.log(f"{log_name} G-code post: no tool-change lines removed from {nc_path.name}")
             return
+        self._write_nc_lines(nc_path, kept)
+        self.log(f"{log_name} G-code post: removed {len(removed)} tool-change lines from {nc_path.name}")
 
-        nc_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
-        self.log(f"{log_name} G-code: removed {len(removed)} tool-selection lines from {nc_path.name}")
+    def _post_remove_length_compensation(self, nc_path: Path, log_name: str):
+        lines = self._read_nc_lines(nc_path)
+        has_g49 = any(re.match(r"^G49\b", line.strip(), re.IGNORECASE) for line in lines)
+        kept = []
+        removed = []
+        inserted_g49 = has_g49
+        for line in lines:
+            if re.match(r"^G43\b", line.strip(), re.IGNORECASE):
+                removed.append(line)
+                continue
+            kept.append(line)
+            if not inserted_g49 and re.match(r"^G90\b", line.strip(), re.IGNORECASE):
+                kept.append("G49")
+                inserted_g49 = True
+        if not inserted_g49:
+            kept.insert(0, "G49")
+            inserted_g49 = True
+        if not removed:
+            self.log(f"{log_name} G-code post: no G43 lines removed from {nc_path.name}")
+        else:
+            self.log(f"{log_name} G-code post: removed {len(removed)} G43 lines from {nc_path.name}")
+        if has_g49:
+            self.log(f"{log_name} G-code post: G49 already present in {nc_path.name}")
+            self._write_nc_lines(nc_path, kept)
+            return
+        self._write_nc_lines(nc_path, kept)
+        position = "after G90" if any(re.match(r"^G90\b", line.strip(), re.IGNORECASE) for line in lines) else "at file start"
+        self.log(f"{log_name} G-code post: inserted G49 {position} in {nc_path.name}")
+
+    def _post_clamp_min_z(self, nc_path: Path, log_name: str):
+        lines = self._read_nc_lines(nc_path)
+        clamped, changed = self._clamp_min_z_lines(lines, self.config.min_z_mm)
+        if not changed:
+            self.log(f"{log_name} G-code post: no Z clamp needed for {nc_path.name}")
+            return
+        self._write_nc_lines(nc_path, clamped)
+        self.log(
+            f"{log_name} G-code post: clamped {changed} Z values to {self.config.min_z_mm:.3f} mm "
+            f"in {nc_path.name}"
+        )
+
+    def _backup_original_nc(self, nc_path: Path, log_name: str):
+        backup_path = nc_path.with_name(f"{nc_path.name}_orig")
+        backup_path.write_text(nc_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+        self.log(f"{log_name} G-code post: backed up original NC to {backup_path.name}")
+
+    def _clamp_min_z_lines(self, lines: list[str], min_z_mm: float) -> tuple[list[str], int]:
+        clamped = []
+        changed = 0
+        for line in lines:
+            match = self.Z_WORD_RE.search(line)
+            if not match:
+                clamped.append(line)
+                continue
+            value = float(match.group("value"))
+            if value >= min_z_mm:
+                clamped.append(line)
+                continue
+            new_value = _fmt_mm(min_z_mm)
+            clamped.append(
+                f"{line[:match.start('value')]}{new_value}{line[match.end('value'):]}"
+            )
+            changed += 1
+        return clamped, changed
+
+    def check_nc(self, nc_path: Path, log_name: str):
+        self._check_nc_min_z(nc_path, log_name)
+        self._check_nc_length_comp(nc_path, log_name)
+
+    def _check_nc_min_z(self, nc_path: Path, log_name: str):
+        min_seen = None
+        for line in self._read_nc_lines(nc_path):
+            match = self.Z_WORD_RE.search(line)
+            if not match:
+                continue
+            value = float(match.group("value"))
+            min_seen = value if min_seen is None else min(min_seen, value)
+        if min_seen is None:
+            self.log(f"{log_name} G-code check: no Z words found in {nc_path.name}")
+            return
+        self.log(f"{log_name} G-code check: min Z={min_seen:.3f} mm in {nc_path.name}")
+        if min_seen < self.config.min_z_mm:
+            raise RuntimeError(f"{nc_path.name}: min Z {min_seen:.3f} below limit {self.config.min_z_mm:.3f}")
+
+    def _check_nc_length_comp(self, nc_path: Path, log_name: str):
+        lines = self._read_nc_lines(nc_path)
+        g43_count = sum(1 for line in lines if re.match(r"^G43\b", line.strip(), re.IGNORECASE))
+        g49_count = sum(1 for line in lines if re.match(r"^G49\b", line.strip(), re.IGNORECASE))
+        self.log(
+            f"{log_name} G-code check: G43={g43_count} G49={g49_count} "
+            f"remove_length_comp={self.config.remove_tool_length_compensation}"
+        )
+        if self.config.remove_tool_length_compensation:
+            if g43_count:
+                raise RuntimeError(f"{nc_path.name}: G43 remains after compensation removal")
+            if g49_count == 0:
+                raise RuntimeError(f"{nc_path.name}: G49 missing after compensation removal")
+
+    Z_WORD_RE = re.compile(r"(?P<prefix>\bZ)(?P<value>-?\d+(?:\.\d+)?)", re.IGNORECASE)
+
+
+
+    def _read_nc_lines(self, nc_path: Path) -> list[str]:
+        return nc_path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+    def _write_nc_lines(self, nc_path: Path, lines: list[str]):
+        nc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

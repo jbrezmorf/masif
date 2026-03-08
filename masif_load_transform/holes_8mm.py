@@ -33,8 +33,8 @@ def holes_8mm(ctx: PartContext, occurrence, slot_name: str):
         retractHeight_value=f"{ctx.config.safe_z_mm} mm",
 
         # Feed Height: Z where the tool switches from rapid to feed before entering the hole
-        feedHeight_mode="from stock top",
-        feedHeight_offset="1 mm",
+        feedHeight_mode="from wcs",
+        feedHeight_value=f"{ctx.config.cycle_plane_z_mm} mm",
 
         # Top Height: the Z level considered the top of the drilling feature/entry surface
         topHeight_mode="from stock top",

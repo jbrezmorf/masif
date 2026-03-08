@@ -7,6 +7,8 @@ from models import PartContext
 def holes_5mm(ctx: PartContext, occurrence, slot_name: str):
     ctx.log(f"holes_5mm START for {slot_name}")
     slot_name=f"{slot_name}_2_5mm"
+    mark_depth_mm = 1.0
+    tool_name = "4.5mm default drill"
     holes_exact, holes_shallow = _detect_lt_7_5mm_holes(occurrence, ctx, slot_name)
     ctx.log(f"holes_5mm detected exact={len(holes_exact)} shallow={len(holes_shallow)} cylindrical faces")
     if not holes_exact and not holes_shallow:
@@ -24,8 +26,8 @@ def holes_5mm(ctx: PartContext, occurrence, slot_name: str):
         retractHeight_value=f"{ctx.config.safe_z_mm} mm",
 
         # Feed Height: Z where the tool switches from rapid to feed before entering the hole
-        feedHeight_mode="from stock top",
-        feedHeight_offset="1 mm",
+        feedHeight_mode="from wcs",
+        feedHeight_value=f"{ctx.config.cycle_plane_z_mm} mm",
 
         # Top Height: the Z level considered the top of the drilling feature/entry surface
         topHeight_mode="from hole top",
@@ -41,16 +43,20 @@ def holes_5mm(ctx: PartContext, occurrence, slot_name: str):
     tool_spec_full.update(drill_feed_speed_params(tool_diameter_mm=5.0))
     tool_spec_shallow = dict(tool_spec_full)
     tool_spec_shallow.update(dict(
-        bottomHeight_mode="from hole top", 
-        bottomHeight_offset="-2 mm",
+        bottomHeight_mode="from hole top",
+        bottomHeight_offset=f"-{mark_depth_mm:g} mm",
         drillTipThroughBottom=False,
     ))
+    ctx.log(
+        f"holes_5mm drilling spec: tool={tool_name} "
+        f"exact_top={tool_spec_full['topHeight_mode']} shallow_mark_depth={mark_depth_mm:.3f} mm"
+    )
     if holes_exact:
         ctx.add_op_drill(
             setup,
             holes_exact,
             slot_name,
-            tool_name="5mm wood drill",
+            tool_name=tool_name,
             **tool_spec_full,
         )
     if holes_shallow:
@@ -58,7 +64,7 @@ def holes_5mm(ctx: PartContext, occurrence, slot_name: str):
             setup,
             holes_shallow,
             slot_name,
-            tool_name="5mm Spot Drill",
+            tool_name=tool_name,
             **tool_spec_shallow,
         )
     ctx.add_op_transverse(setup, 0.0, 0.0)

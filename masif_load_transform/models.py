@@ -323,10 +323,11 @@ class PartContext:
         height = self.dimensions.z
         cnc_limit = 125 # absolute limit is 1265 mm
         self.log(f"{name}: h={height}, bby=({bb.minPoint.y}, {bb.maxPoint.y})")
+        # assuming X+, Y- quadrant
         if "top" in name:
-            return bb.minPoint.y < cnc_limit + 0.01
+            return bb.minPoint.y > -cnc_limit - 0.01
         if "bottom" in name:
-            return (bb.maxPoint.y < (height - cnc_limit) + 0.01) and (height > cnc_limit)
+            return (bb.maxPoint.y > -(height - cnc_limit) + 0.01) and (height > cnc_limit)
         raise RuntimeError("slot_name must include 'top' or 'bottom'")
 
     def _get_cam_product(self):

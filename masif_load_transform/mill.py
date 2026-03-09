@@ -18,7 +18,7 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
     tool_name = "8mm Flat Endmill"
 
     # Minimal, stable 2D Pocket params (tune feeds elsewhere if needed)
-    pocket_spec = dict(
+    base_spec = dict(
         # Heights (same system as your drill: *_mode/_offset)
         clearanceHeight_mode="from wcs",
         clearanceHeight_value=f"{ctx.config.safe_z_mm} mm",
@@ -31,12 +31,6 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
 
         topHeight_mode="from stock top",
         topHeight_offset="0 mm",
-
-        # Bottom of pocket plane (your faces are at -1mm from stock top)
-        # Either drive to "from selection" with offset 0, or directly set bottomHeight_value.
-        # Start with selection-based, because you already have pocket bottom faces.
-        bottomHeight_mode="from stock top",
-        bottomHeight_offset="-1 mm",
 
 
         # Linking / ramp stuff that causes your warnings
@@ -61,14 +55,49 @@ def mill(ctx: PartContext, occurrence, slot_name: str):
 
         useStockContours=False,
     )
-    pocket_spec.update(mill_feed_speed_params(tool_diameter_mm=8.0, flutes=2))
-    print(pocket_spec)
-    ctx.add_op_pocket2d(
+    base_spec.update(mill_feed_speed_params(tool_diameter_mm=8.0, flutes=2))
+
+    contour_spec = dict(
+        (k, v) for k, v in base_spec.items() if k != "doFinishingPasses"
+    )
+    contour_spec.update(dict(
+        compensationType="computer",
+        useStockToLeave=False,
+        stockToLeave="0 mm",
+        verticalStockToLeave="0 mm",
+        topHeight_mode="from stock top",
+        topHeight_offset="0 mm",
+    ))
+
+    pocket_spec = dict(
+        base_spec,
+        bottomHeight_mode="from stock top",
+        bottomHeight_offset="-1 mm",
+        useStockToLeave=True,
+        stockToLeave="0.3 mm",
+        verticalStockToLeave="0 mm",
+        doFinishingPasses=False,
+    )
+    contour_stepdowns_mm = [0.35, 0.7, 1.0]
+    final_depth_mm = 1.0
+
+    # ctx.add_op_pocket2d(
+    #     setup,
+    #     pocket_chains=chains,
+    #     slot_name=slot_name,
+    #     tool_name=tool_name,
+    #     **dict(base_spec, bottomHeight_mode="from stock top", bottomHeight_offset="-1 mm"),
+    # )
+    ctx.add_op_mill_contour_first(
         setup,
         pocket_chains=chains,
         slot_name=slot_name,
         tool_name=tool_name,
-        **pocket_spec,
+        contour_stepdowns_mm=contour_stepdowns_mm,
+        contour_spec=contour_spec,
+        pocket_spec=pocket_spec,
+        final_depth_mm=final_depth_mm,
+        pocket_faces=faces,
     )
 
     ctx.add_op_transverse(setup, 0.0, 0.0)

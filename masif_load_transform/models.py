@@ -578,46 +578,39 @@ class PartContext:
     #     self.log(f"Operation: item: name={op.name} objectType={op.objectType}")
     #     return op
 
-    def _create_pocket2d_op(self, setup, pocket_chains, slot_name: str, tool_name: str, **kw_args):
-        """
-        Create a 2D Pocket operation input using CLOSED CHAIN geometry (outer boundary edges).
-        Mirrors the drill automation style.
-        """
+    def _apply_object_list(self, op_in, items, param_names: list[str], op_label: str):
+        if not items:
+            return False
+        for param_name in param_names:
+            prm = op_in.parameters.itemByName(param_name)
+            if not prm:
+                continue
+            try:
+                prm.value.value = items
+                self.log(f"{op_label}: using geometry param '{param_name}' with {len(items)} items")
+                return True
+            except Exception as ex:
+                self.log(f"{op_label}: failed geometry param '{param_name}': {ex}")
+        return False
+
+    def _apply_pocket2d_geometry(self, op_in, pocket_chains, pocket_faces, op_label: str):
+        if self._apply_object_list(op_in, pocket_faces, ["pocketFaces", "faces", "selectedFaces"], op_label):
+            return
+        self._apply_2d_chains(
+            op_in,
+            pocket_chains,
+            ["pocketSelection", "pockets", "pocketProfiles", "machiningBoundary", "machiningBoundaries"],
+            op_label,
+        )
+
+    def _create_pocket2d_op(self, setup, pocket_chains, slot_name: str, tool_name: str, pocket_faces=None, **kw_args):
         tool = self._find_tool_by_full_name(tool_name)
 
         op_in = setup.operations.createInput("pocket2d")
         op_in.displayName = f"{slot_name}_pocket2d"
         op_in.tool = tool
 
-        # ---- Geometry: closed chains (best match to your GUI workflow) ----
-        if not pocket_chains:
-            raise RuntimeError("No pocket chains provided")
-
-        prm = op_in.parameters.itemByName("pockets")
-        if not prm:
-            raise RuntimeError("Operation has no 'pockets' parameter.")
-
-        # IMPORTANT: this is a CadContours2dParameterValue, not a CadObjectParameterValue
-        pocket_sel = adsk.cam.CadContours2dParameterValue.cast(prm.value)
-        if not pocket_sel:
-            raise RuntimeError(f"'pockets' is not CadContours2dParameterValue (got {getattr(prm.value,'objectType','?')})")
-
-        chains = pocket_sel.getCurveSelections()
-        chains.clear()
-
-        # Closed Chain == ChainSelection
-        for boundary_edges in pocket_chains:
-            ch = chains.createNewChainSelection()
-            ch.inputGeometry = boundary_edges   # <-- SAME TYPE as case A boundary_edges
-
-            # Optional: some builds expose isReverted (same meaning as GUI “Reverted”)
-            # Guard it because properties can differ by build.
-            try:
-                ch.isReverted = True
-            except:
-                pass
-
-        pocket_sel.applyCurveSelections(chains)       
+        self._apply_pocket2d_geometry(op_in, pocket_chains, pocket_faces or [], op_in.displayName)
     
         for k, v in kw_args.items():
             self.set_expr(op_in, k, v)
@@ -626,11 +619,105 @@ class PartContext:
         return op_in
 
 
-    def add_op_pocket2d(self, setup, pocket_chains, slot_name: str, tool_name: str, **kw_args):
-        op_in = self._create_pocket2d_op(setup, pocket_chains, slot_name, tool_name, **kw_args)
+    def add_op_pocket2d(self, setup, pocket_chains, slot_name: str, tool_name: str, pocket_faces=None, **kw_args):
+        op_in = self._create_pocket2d_op(setup, pocket_chains, slot_name, tool_name, pocket_faces=pocket_faces, **kw_args)
         op = setup.operations.add(op_in)
         self.log(f"Created pocket2d op: {op_in.displayName}")
         return op
+
+    def _apply_2d_chains(self, op_in, pocket_chains, param_names: list[str], op_label: str):
+        if not pocket_chains:
+            raise RuntimeError(f"No chains provided for {op_label}")
+        for param_name in param_names:
+            prm = op_in.parameters.itemByName(param_name)
+            if not prm:
+                continue
+            pocket_sel = adsk.cam.CadContours2dParameterValue.cast(prm.value)
+            if not pocket_sel:
+                continue
+            chains = pocket_sel.getCurveSelections()
+            chains.clear()
+            for boundary_edges in pocket_chains:
+                ch = chains.createNewChainSelection()
+                ch.inputGeometry = boundary_edges
+                try:
+                    ch.isReverted = True
+                except:
+                    pass
+            pocket_sel.applyCurveSelections(chains)
+            self.log(f"{op_label}: using geometry param '{param_name}'")
+            return
+        raise RuntimeError(f"{op_label}: no compatible chain parameter found")
+
+    def _create_contour2d_op(self, setup, pocket_chains, slot_name: str, tool_name: str, **kw_args):
+        tool = self._find_tool_by_full_name(tool_name)
+
+        op_in = setup.operations.createInput("contour2d")
+        op_in.displayName = f"{slot_name}_contour2d"
+        op_in.tool = tool
+
+        self._apply_2d_chains(
+            op_in,
+            pocket_chains,
+            ["contours", "contour", "machiningBoundary", "machiningBoundaries", "profiles"],
+            op_in.displayName,
+        )
+
+        for k, v in kw_args.items():
+            self.set_expr(op_in, k, v)
+
+        self.log(f"Created contour2d op input: {op_in.displayName}")
+        return op_in
+
+    def add_op_contour2d(self, setup, pocket_chains, slot_name: str, tool_name: str, **kw_args):
+        op_in = self._create_contour2d_op(setup, pocket_chains, slot_name, tool_name, **kw_args)
+        op = setup.operations.add(op_in)
+        self.log(f"Created contour2d op: {op_in.displayName}")
+        return op
+
+    def add_op_mill_contour_first(
+        self,
+        setup,
+        pocket_chains,
+        slot_name: str,
+        tool_name: str,
+        contour_stepdowns_mm: list[float],
+        contour_spec: dict,
+        pocket_spec: dict,
+        final_depth_mm: float,
+        pocket_faces=None,
+    ):
+        for i, depth_mm in enumerate(contour_stepdowns_mm, start=1):
+            step_spec = dict(contour_spec)
+            step_spec["bottomHeight_mode"] = "from stock top"
+            step_spec["bottomHeight_offset"] = f"-{depth_mm:g} mm"
+            self.add_op_contour2d(
+                setup,
+                pocket_chains,
+                f"{slot_name}_edge_{i}",
+                tool_name,
+                **step_spec,
+            )
+
+        self.add_op_pocket2d(
+            setup,
+            pocket_chains,
+            f"{slot_name}_center",
+            tool_name,
+            pocket_faces=pocket_faces,
+            **pocket_spec,
+        )
+
+        spring_spec = dict(contour_spec)
+        spring_spec["bottomHeight_mode"] = "from stock top"
+        spring_spec["bottomHeight_offset"] = f"-{final_depth_mm:g} mm"
+        self.add_op_contour2d(
+            setup,
+            pocket_chains,
+            f"{slot_name}_edge_spring",
+            tool_name,
+            **spring_spec,
+        )
 
     def _create_manual_nc(self, setup: adsk.cam.Setup, name: str, gcode: str) -> adsk.cam.OperationInput:
         """

@@ -31,7 +31,7 @@ class JobConfig:
     delete_base_import_occurrence: bool = False
     safe_z_mm: float = 45.0
     cycle_plane_z_mm: float = 25.0
-    min_z_mm: float = -17.0
+    min_z_mm: float = -16.0
     remove_tool_length_compensation: bool = False
 
     @cached_property

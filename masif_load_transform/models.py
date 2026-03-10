@@ -690,7 +690,7 @@ class PartContext:
         for i, depth_mm in enumerate(contour_stepdowns_mm, start=1):
             step_spec = dict(contour_spec)
             step_spec["bottomHeight_mode"] = "from stock top"
-            step_spec["bottomHeight_offset"] = f"-{depth_mm:g} mm"
+            step_spec["bottomHeight_offset"] = "0 mm" if depth_mm == 0 else f"-{depth_mm:g} mm"
             self.add_op_contour2d(
                 setup,
                 pocket_chains,

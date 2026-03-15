@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
+import math
 from pathlib import Path
 import re
 import time
@@ -22,6 +23,35 @@ def pt_diff(b, a):
 def _fmt_mm(value: float) -> str:
     s = f"{value:.3f}".rstrip("0")  #.rstrip(".")
     return s if s else "0"
+
+
+def linspace(
+    start: float,
+    stop: float,
+    num: int,
+    endpoint: bool = True,
+    step: float | None = None,
+) -> list[float]:
+    if num <= 0:
+        raise RuntimeError("num must be > 0")
+    if step is not None:
+        if step <= 0.0:
+            raise RuntimeError("step must be > 0")
+        span = abs(stop - start)
+        min_num = math.ceil(span / step)
+        min_num += 1 if endpoint else 0
+        num = max(num, min_num)
+    if num == 1:
+        return [start]
+    divisor = num - 1 if endpoint else num
+    step = (stop - start) / divisor
+    return [start + step * i for i in range(num)]
+
+
+def _stock_top_offset_mm(z_mm: float) -> str:
+    if abs(z_mm) < 1e-9:
+        return "0 mm"
+    return f"{z_mm if z_mm < 0.0 else -z_mm:g} mm"
 
 @dataclass(frozen=True)
 class JobConfig:
@@ -690,7 +720,7 @@ class PartContext:
         for i, depth_mm in enumerate(contour_stepdowns_mm, start=1):
             step_spec = dict(contour_spec)
             step_spec["bottomHeight_mode"] = "from stock top"
-            step_spec["bottomHeight_offset"] = "0 mm" if depth_mm == 0 else f"-{depth_mm:g} mm"
+            step_spec["bottomHeight_offset"] = _stock_top_offset_mm(depth_mm)
             self.add_op_contour2d(
                 setup,
                 pocket_chains,
@@ -710,7 +740,7 @@ class PartContext:
 
         spring_spec = dict(contour_spec)
         spring_spec["bottomHeight_mode"] = "from stock top"
-        spring_spec["bottomHeight_offset"] = f"-{final_depth_mm:g} mm"
+        spring_spec["bottomHeight_offset"] = _stock_top_offset_mm(final_depth_mm)
         self.add_op_contour2d(
             setup,
             pocket_chains,

@@ -43,3 +43,9 @@ Conclusion: Try to find larger CNC possibly contact Kateřinky, and
 try to figure out some cooperation in programmed/ML based  woodcrafting.
 
 Backup option: scale dragon pattern smaller, do other ops manually.
+
+## bottom
+- Keep existing design, add minimalistic separators to the far side.
+  need about 40mm x 18mm profile. There is a risk of deformation with time, but that should not matter as the containers will slide on the sides. Future designs: solid bottom or through going part, connecting the bottom slides.
+- Adapt model of the front bottom to 130mm wide and elevated ramp.
+- 
